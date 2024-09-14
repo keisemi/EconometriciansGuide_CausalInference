@@ -1,0 +1,1066 @@
+---
+title: "第10章　差の差法とその周辺の発展的トピック"
+subtitle: "[R10.2] 処置割り当てが多期間にわたる場合の推定"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+ここでは、第10章の10.2節「異なる時点に処置割当が生じる場合の分解・集計手法」で解説した差の差推定の方法を、`did`パッケージを用いて実装する。`CausalInferenceTextbook`から呼び出している関数は`R/functions_did.R`に定義されている。
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(CausalInferenceTextbook)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+はじめに、個体数`N`と期間`T`を設定する。
+
+```{r}
+N <- 1000
+T0 <- 4
+T1 <- 6
+T <- T0 + T1
+```
+
+次に、処置効果を生成するパラメータを指定する。
+
+本分析では、複数時点で処置が発生し、処置群のなかで処置が段階的に割り当てられていくデザインを扱う。
+このときの、個体に関する処置効果を生成する正規分布のパラメータを`mean_tau_i_multi`, `sd_tau_i_multi`と指定する。
+このデザインでは、処置割り当てのタイミングごとに異なる符号の効果が発生するように、上のパラメータ(`mean_tau_i_multi`,`sd_tau_i_multi`)に基づく正規分布の絶対値に、効果量の乗数`scale_5`, `scale_6`, `scale_7`, `scale_8`を掛けたものを処置効果とする。
+
+```{r}
+mean_tau_i_multi <- 0.1
+sd_tau_i_multi <- 0.2
+scale_5 <- 1
+scale_6 <- -2.5
+scale_7 <- -1.75
+scale_8 <- -1
+```
+
+$5$期目に割り当てを受ける個体群の処置効果には`r scale_5`が掛けられ、$6$期目に割り当てを受ける個体群の処置効果には`r scale_6`が掛けられるなど、符号や効果量が処置割り当てのタイミングごとに異なるように設計している。
+
+本分析ではトレンドが二種類の共変量に依存する場合を考える。共変量に依存するトレンドを決定するパラメータとして、`slope_x1`と`slope_x2`を設定する。
+
+```{r}
+slope_x1 <- -0.2
+slope_x2 <- -0.1
+```
+
+以上のパラメータに基づいて、具体的にデータ生成過程を記述する。
+
+## 平行トレンドに共変量が不要なケース
+
+まず、`difference_in_differences_TWFE.Rmd`で分析した、複数時点での処置発生デザインを生成する。
+
+### 生成過程
+
+統制下の潜在結果関数を以下のように生成する：
+
+```{=latex}
+\begin{align*}
+ Y^*_{t}(0) =& a_i + b_t + e_{it}
+\end{align*}
+```
+
+ただし、
+
+* 個体固定効果$a_i$: 2020年度大卒女性新卒者初任給を対数正規分布近似から生成する、個体についてiidの分布
+* 時間固定効果$b_t$: 線形トレンド $b_t = t/T$
+* 撹乱項$e_{it}$: 個体と時間についてiidの正規分布
+
+とする。処置下の潜在結果関数は
+
+```{=latex}
+\begin{align*}
+ Y^*_{t}(1) =& Y^*_t(0) + Z_{it} \tau_{it}
+\end{align*}
+```
+
+で与える。
+
+
+共変量$x_{1i}$, $x_{2i}$を$(0, 0)$, $(1, 0)$, $(1, 1)$の三値を取る二項変数のペアとする。処置群の割り当てが以下の順序付きロジットモデルに従って行われているとする。
+
+$T_0 + 1 = 5$期に処置を受ける確率は
+
+\begin{align*}
+ P(G_{5i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{11} x_{1i} + \alpha^{12}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{11}x_{1i} + \alpha^{12}x_{2i})},
+\end{align*}
+
+であり、それ以降の期間については、以下の確率
+
+\begin{align*}
+P(G_{6i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})} - 
+ \frac{\exp(\alpha_0 + \alpha^{11} x_{1i} + \alpha^{12}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{11} x_{1i} + \alpha^{12}x_{2i})}\\
+P(G_{7i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})} - 
+ \frac{\exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})}\\
+P(G_{8i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{41} x_{1i} + \alpha^{42}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{41} x_{1i} + \alpha^{42}x_{2i})} - 
+ \frac{\exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})}
+ \end{align*}
+
+で処置を受けるとする。
+
+$G_{5i}, G_{6i}, G_{7i}, G_{8i}$はそれぞれ5期目、6期目、7期目、8期目から処置を受け始める個体を表すダミー変数とする。
+
+処置効果は
+\begin{align*}
+  \tau_{it} = \tau_t \cdot |\tau_i| \cdot (`r scale_5` \cdot G_{5i} + (`r scale_6`) \cdot G_{6i} + (`r scale_7`) \cdot G_{7i} + (`r scale_8`) \cdot G_{8i})
+\end{align*}
+で与えられる。
+
+`scale_5`は1、`scale_6`は-2.5、`scale_7`は-1.75、`scale_8`は-1に設定している。$\tau_i$は平均`r mean_tau_i_multi`、分散`r sd_tau_i_multi`の正規分布から生成し、$\tau_t$は一様分布$U[0.9,1.1]$から生成する。
+
+### データの生成
+
+この設定でデータを生成する。
+```{r}
+set.seed(1)
+df_design_nocov <- 
+  generate_df_multiperiod(
+    N = N,
+    T = T,
+    T1 = T1,
+    T0 = T0,
+    diff_trend = FALSE,
+    mean_tau_i = mean_tau_i_multi,
+    sd_tau_i = sd_tau_i_multi,
+    scale_5 = scale_5,
+    scale_6 = scale_6,
+    scale_7 = scale_7,
+    scale_8 = scale_8
+  )
+```
+
+このとき、10期間を固定したうえで、各コーホートの割合を計算すると以下のようになる。
+
+```{r}
+df_design_nocov %>%
+  dplyr::group_by(
+    g5_i,
+    g6_i,
+    g7_i,
+    g8_i
+  ) %>%
+  dplyr::summarise(
+   fraction = length(z_it) 
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+   fraction = fraction / sum(fraction)
+  ) %>%
+  dplyr::arrange(
+    g8_i,
+    g7_i,
+    g6_i,
+    g5_i
+  )
+```
+
+
+また、各コーホートの期間平均の処置群平均処置効果は以下のとおりである。
+
+まず、$|\tau_i|$の期待値を計算する。一般に、
+\begin{align*}
+ \mathbb{E}[|\tau_i|] =&  \mathbb{E}[|\tau_i||\tau_i \geq 0]\mathbb{P}(\tau_i \geq 0)+ \mathbb{E}[|\tau_i||\tau_i < 0]\mathbb{P}(\tau_i < 0)\\
+ =&  \mathbb{E}[\tau_i|\tau_i \geq 0]\mathbb{P}(\tau_i \geq 0)- \mathbb{E}[\tau_i|\tau_i < 0]\mathbb{P}(\tau_i < 0)
+\end{align*}
+である。
+
+$\tau_i$が従う正規分布の平均を$\mu$、標準偏差を$\sigma$とすれば、切断正規分布の期待値は
+\begin{align*}
+ \mathbb{E}[\tau_i|\tau_i \geq 0] =& \mu + \sigma \frac{\phi((0-\mu)/\sigma)-0}{1 - \Phi((0-\mu)/\sigma)}\\
+ \mathbb{E}[\tau_i|\tau_i < 0] =& \mu - \sigma \frac{0-\phi((0-\mu)/\sigma)}{\Phi((0-\mu)/\sigma)-0}
+\end{align*}
+で与えられる。ただし、$\phi$と$\Phi$はそれぞれ標準正規分布の密度関数、分布関数である。
+
+ここで、
+\[
+ \mathbb{P}[\tau_i \geq 0] = \mathbb{P}[(\tau_i - \mu)/\sigma \geq \mu/\sigma] = \Phi(\mu/\sigma)
+\]
+であることを用いれば、
+\begin{align*}
+ \mathbb{E}[|\tau_i|] =&  (\mu + \sigma \frac{\phi((0-\mu)/\sigma)}{1 - \Phi((0-\mu)/\sigma)})*\Phi(\mu/\sigma)\\
+ &- (\mu - \sigma \frac{\phi((0-\mu)/\sigma)}{\Phi((0-\mu)/\sigma)})*(1-\Phi(\mu/\sigma))
+\end{align*}
+である。
+
+```{r}
+mean_abs_tau_i <- 
+  (
+    mean_tau_i_multi + 
+      sd_tau_i_multi * (dnorm((-mean_tau_i_multi) / sd_tau_i_multi)) / 
+      (1 - pnorm((-mean_tau_i_multi) / sd_tau_i_multi))
+   ) * 
+    pnorm(mean_tau_i_multi / sd_tau_i_multi) -
+  (
+    mean_tau_i_multi -
+     sd_tau_i_multi * (dnorm((-mean_tau_i_multi) / sd_tau_i_multi)) / 
+     (pnorm((-mean_tau_i_multi) / sd_tau_i_multi))
+   ) * 
+    (1 - pnorm(mean_tau_i_multi / sd_tau_i_multi))
+```
+
+次に、この$\mathbb{E}[|\tau_{i}|]$をもとに、処置群平均処置効果の期間平均を計算する。
+
+```{r}
+att_pop_nocov_group <- 
+  df_design_nocov %>% 
+    dplyr::filter(
+      time > T0,
+      g5_i == 1
+    ) %>%
+    dplyr::summarize(
+      group = "5",
+      att_pop_nocov = mean(unique(tau_t)) * (scale_5) * mean_abs_tau_i,
+      fraction_within_group = sum(z_it) / sum(df_design_nocov$z_it)
+    )
+
+att_pop_nocov_group <- 
+  rbind(
+    att_pop_nocov_group,
+    df_design_nocov %>% 
+      dplyr::filter(
+        time > T0 + 1,
+        g6_i == 1
+      ) %>%
+      dplyr::summarize(
+        group = "6",
+        att_pop_nocov = mean(unique(tau_t)) * (scale_6) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_nocov$z_it)
+      ) 
+  )
+
+att_pop_nocov_group <-
+  rbind(
+    att_pop_nocov_group, 
+    df_design_nocov %>% 
+      dplyr::filter(
+        time > T0 + 2,
+        g7_i == 1
+      ) %>%
+      dplyr::summarize(
+        group = "7",
+        att_pop_nocov = mean(unique(tau_t)) * (scale_7) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_nocov$z_it)
+      )
+  )
+att_pop_nocov_group <- 
+  rbind(
+    att_pop_nocov_group, 
+    df_design_nocov %>% 
+      dplyr::filter(
+        time > T0 + 3,
+        g8_i == 1
+      ) %>%
+     dplyr::summarize(
+        group = "8",
+        att_pop_nocov = mean(unique(tau_t)) * (scale_8) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_nocov$z_it)
+      )
+  )
+
+att_pop_nocov_group
+```
+
+このように、デフォルトのパラメータ設定であれば、設定の通り5期に処置を受ける群の割合が最も多く、処置群平均処置効果は正の値をとる。6-8期に処置を受ける群は割合が小さく、処置群平均処置効果は負の値をとる。
+
+それぞれのグループの割合について加重平均を取れば、この母集団における処置群平均処置効果の期間平均が計算できる。
+
+```{r}
+att_pop_nocov <-
+  att_pop_nocov_group$att_pop_nocov %*% att_pop_nocov_group$fraction_within_group
+att_pop_nocov
+```
+
+次に標本の中での処置群平均処置効果をコーホートごとに計算すると、母集団における処置群平均処置効果と厳密には一致しない。
+
+ここで`group_i`は統制群(`group_i = 0`)と処置群のうち処置割り当てのタイミング(例えば、5期に処置を受けるグループは`group_i = 5`)を表す変数である。
+
+```{r}
+att_sample_nocov_group <- 
+  df_design_nocov %>%
+  dplyr::filter(
+    group_i > 0
+  ) %>%
+  dplyr::group_by(
+    group_i
+  ) %>%
+  dplyr::summarise(
+    att_sample = sum(tau_it * (time >= group_i)) / sum(time >= group_i)
+  )
+att_sample_nocov_group
+```
+
+標本内の全コーホートの処置群平均処置効果は、個体によって処置を受けるタイミングが異なるので、時点$t$に処置を受けているかどうかのダミー変数$z_{it}$を作り、処置群($z_{it}=1$)について$\tau_{it}$の平均を取れば、以下のように多少異なった数値が得られる。
+
+```{r}
+att_sample_nocov <-
+  df_design_nocov %>%
+  dplyr::filter(
+    z_it == 1
+  ) %>%
+  dplyr::summarise(
+    att_sample_nocov = mean(tau_it)
+  )
+att_sample_nocov
+```
+
+## 条件付き平行トレンドを必要とするケース
+
+次に、線形トレンドが共変量の値によって異なるように生成する場合を考える。
+
+### 生成過程
+
+ここまでは共変量は処置タイミングのグループを決定するのみであり、条件付き期待値関数は共変量の値に依存しなかった。
+
+ここまで`diff_trend`を`FALSE`と設定することで
+\[
+ b_{t} = t / T
+\]
+としていたものを、以下では`diff_trend`を`TRUE`とすることで
+\[
+ b_{t} = (t / T) * (1 - x_{1i} - x_{2i}) + (`r slope_x1`) * (t / T) * x_{1i} + (`r slope_x2`) * (t / T) * x_{2i}
+\]
+となるように設定する。
+
+デフォルトのパラメータ設定では、共変量$x_{1i}$や$x_{2i}$の値が`0`をとる個体が増加トレンドをもつ一方、二種類の共変量の値がどちらか一方でも`1`をとる個体が減少トレンドをもつようになる。
+
+### データの生成
+
+```{r}
+set.seed(1)
+df_design_cov <- 
+  generate_df_multiperiod(
+    N = N,
+    T = T,
+    T1 = T1,
+    T0 = T0,
+    diff_trend = TRUE,
+    mean_tau_i = mean_tau_i_multi,
+    sd_tau_i = sd_tau_i_multi,
+    scale_5 = scale_5,
+    scale_6 = scale_6,
+    scale_7 = scale_7,
+    scale_8 = scale_8,
+    slope_x1 = slope_x1,
+    slope_x2 = slope_x2
+  )
+```
+
+このデータでは、`tau_it`を変更していないため、母集団・標本の処置群平均処置効果は上のケースと同一である。
+母集団におけるグループごとの処置群平均処置効果のみを再度計算し、確かめておく。
+
+```{r}
+att_pop_cov_group <- 
+  df_design_cov %>% 
+    dplyr::filter(
+      time > T0,
+      g5_i == 1
+    ) %>%
+    dplyr::summarize(
+      group = "5",
+      att_pop_cov = mean(unique(tau_t)) * (scale_5) * mean_abs_tau_i,
+      fraction_within_group = sum(z_it) / sum(df_design_cov$z_it)
+    )
+
+att_pop_cov_group <- 
+  rbind(
+    att_pop_cov_group,
+    df_design_cov %>% 
+      dplyr::filter(
+        time > T0 + 1,
+        g6_i == 1
+      ) %>%
+      dplyr::summarize(
+        group = "6",
+        att_pop_cov = mean(unique(tau_t)) * (scale_6) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_cov$z_it)
+      ) 
+  )
+
+att_pop_cov_group <-
+  rbind(
+    att_pop_cov_group, 
+    df_design_cov %>% 
+      dplyr::filter(
+        time > T0 + 2,
+        g7_i == 1
+      ) %>%
+      dplyr::summarize(
+        group = "7",
+        att_pop_cov = mean(unique(tau_t)) * (scale_7) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_cov$z_it)
+      )
+  )
+att_pop_cov_group <- 
+  rbind(
+    att_pop_cov_group, 
+    df_design_cov %>% 
+      dplyr::filter(
+        time > T0 + 3,
+        g8_i == 1
+      ) %>%
+     dplyr::summarize(
+        group = "8",
+        att_pop_cov = mean(unique(tau_t)) * (scale_8) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_cov$z_it)
+      )
+  )
+
+att_pop_cov_group
+```
+
+共変量$x_{1i}$や$x_{2i}$の値が`1`をとる個体は、後から処置を受ける処置群グループとなる確率が高くなるように設定している。そのため、処置群の観測が統制群の観測よりも低い値で実現することになる。
+
+下に生成する散布図は、処置群と統制群の統制期間(第3期と第4期)について、第3期の顕在結果と第3期から第4期への顕在結果トレンドを比較するものである。
+
+第一の散布図は、第4期に顕在結果が大きくなることを表す右上の領域に比べ、顕在結果が小さくなることを表す左下の領域に処置群が統制群よりも多く分布していることを表している。よって、分布全体としては平行トレンドが必ずしも成り立っているとはいえない。
+
+一方で、その後の共変量値ごとに分けた散布図をみれば、それぞれの部分標本では処置群と統制群でトレンドに大きな差がないことが見て取れる。
+
+```{r}
+df_design_cov <- 
+  df_design_cov %>% 
+  dplyr::mutate(
+    group = 
+      dplyr::if_else(
+        group_i < 5,
+        "control",
+        "treat"
+      ),
+    groupx =
+      dplyr::if_else(
+        x1_i == 1,
+        dplyr::if_else(
+          x2_i == 1,
+          "1,1",
+          "1,0"
+        ),
+        dplyr::if_else(
+          x2_i == 1,
+          "0,1",
+          "0,0"
+        )
+      )
+  )
+
+df_compare <-
+  df_design_cov %>%
+  dplyr::filter(
+    time == 3 | time == 4
+  ) %>%
+  tidyr::pivot_wider(
+    id_cols = 
+      c(
+        id,
+        group,
+        groupx
+      ),
+    names_from = time,
+    names_prefix = "y",
+    values_from = y_it
+  ) 
+  
+
+df_compare <-
+  df_compare %>%
+  dplyr::mutate(
+    dif = y4 - y3
+  )
+
+g <- 
+  df_compare %>%
+  ggplot(
+    aes(
+      x = y3,
+      y = dif,
+      color = group
+    )
+  ) +
+  geom_point() +
+  scale_color_viridis_d() +
+  ylim(
+    c(
+      -0.25,
+      0.25
+    )
+  ) +
+  xlim(
+    c(
+      4.2,
+      6.4
+    )
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "bottom"
+  )
+g
+
+purrr::map(
+  c(
+    "0,0",
+    "1,0",
+    "1,1"
+  ), 
+  function(
+    group_name
+    ) { 
+      df_compare %>%
+      dplyr::filter(
+        groupx == group_name
+      ) %>%  
+      ggplot(
+        aes(
+          x = y3,
+          y = dif,
+          color = group
+        )
+      ) +
+      geom_point() +
+      scale_color_viridis_d() +
+      ylim(
+        c(
+          -0.25,
+          0.25
+        )
+      ) +
+      xlim(
+        c(
+          4.2,
+          6.4
+        )
+      ) +
+      theme_classic() + 
+      labs(
+        title = paste0("(x1,x2) = (", group_name, ")")
+      ) +
+      theme(
+        legend.position = "bottom"
+      )
+    }
+  )
+```
+
+## 全ての個体が観測期間中に処置を受けてしまう場合
+
+最後に、すべての個体が観測期待中に処置を受けてしまう場合を考える。
+
+```{r}
+set.seed(1)
+df_design_nyt <- 
+  generate_df_multiperiod_nyt(
+    N = N,
+    T = T,
+    T1 = T1,
+    T0 = T0,
+    diff_trend = FALSE,
+    mean_tau_i = mean_tau_i_multi,
+    sd_tau_i = sd_tau_i_multi,
+    scale_5 = scale_5,
+    scale_6 = scale_6,
+    scale_7 = scale_7,
+    scale_8 = scale_8
+  )
+```
+
+この設定では、これまで統制群であったグループが最後の期(`T = 10`)に処置を受ける場合を考える。最後に処置をうけるグループは、その処置効果は0としてある。
+
+それ以外の設定は変わらず、グループごとの処置群平均処置効果も同一である。
+
+```{r}
+att_pop_nyt_group <- 
+  df_design_nyt %>% 
+    dplyr::filter(
+      time > T0,
+      g5_i == 1
+    ) %>%
+    dplyr::summarize(
+      group = "5",
+      att_pop_nyt = mean(unique(tau_t)) * (scale_5) * mean_abs_tau_i,
+      fraction_within_group = sum(z_it) / sum(df_design_nyt$z_it)
+    )
+
+att_pop_nyt_group <- 
+  rbind(
+    att_pop_nyt_group,
+    df_design_nyt %>% 
+      dplyr::filter(
+        time > T0 + 1,
+        g6_i == 1
+      ) %>%
+      dplyr::summarize(
+        group = "6",
+        att_pop_nyt = mean(unique(tau_t)) * (scale_6) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_nyt$z_it)
+      ) 
+  )
+
+att_pop_nyt_group <-
+  rbind(
+    att_pop_nyt_group, 
+    df_design_nyt %>% 
+      dplyr::filter(
+        time > T0 + 2,
+        g7_i == 1
+      ) %>%
+      dplyr::summarize(
+        group = "7",
+        att_pop_nyt = mean(unique(tau_t)) * (scale_7) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_nyt$z_it)
+      )
+  )
+att_pop_nyt_group <- 
+  rbind(
+    att_pop_nyt_group, 
+    df_design_nyt %>% 
+      dplyr::filter(
+        time > T0 + 3,
+        g8_i == 1
+      ) %>%
+     dplyr::summarize(
+        group = "8",
+        att_pop_nyt = mean(unique(tau_t)) * (scale_8) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_nyt$z_it)
+      )
+  )
+att_pop_nyt_group <- 
+  rbind(
+    att_pop_nyt_group, 
+    df_design_nyt %>% 
+      dplyr::filter(
+        time > T0 + 3,
+        g10_i == 1
+      ) %>%
+     dplyr::summarize(
+        group = "10",
+        att_pop_nyt = 0,
+        fraction_within_group = sum(z_it)/sum(df_design_nyt$z_it)
+      )
+  )
+att_pop_nyt_group
+```
+
+# 推定
+
+## 平行トレンドに共変量が不要なケース
+
+まず、平行トレンドに共変量が関わらないケースの分析を行う。
+先ほど生成した`df_design_nocov`のうち、観測できる変数は以下の通りである。
+
+```{r}
+df_design_nocov_observed <- 
+  df_design_nocov %>%
+  dplyr::select(
+    id,
+    time,
+    group_i,
+    g5_i,
+    g6_i,
+    g7_i,
+    g8_i,
+    z5_it,
+    z6_it,
+    z7_it,
+    z8_it,
+    z_it,
+    y_it
+  )
+head(df_design_nocov_observed)
+```
+
+
+### 修正TWFE推定
+
+この設定では、共変量がトレンドに影響していないため、処置を受けるタイミングのグループを表すダミー変数と、処置時点のダミー変数について、項が飽和するようなTWFE推定を行えば、各グループの各処置時点ごとにおける処置群平均処置効果を推定することができる。
+
+以下に結果を再掲するが、詳しくは`difference_in_differences_TWFE.Rmd`を参照してほしい。
+
+```{r}
+df_design_nocov_observed <-
+  df_design_nocov_observed %>%
+  dplyr::mutate(
+    z_it_t = z_it * time + z_it * group_i * 100
+  ) %>%
+  fastDummies::dummy_cols(
+    select_columns = "z_it_t"
+  ) %>%
+  dplyr::select(-"z_it_t_0")
+
+fml <- 
+  as.formula(
+    paste(
+      "y_it ~ ",
+      paste(
+        grep(
+          "z_it_t_", 
+          names(df_design_nocov_observed), 
+          value = TRUE
+        ),
+          collapse = "+"
+      )
+    )
+  )
+
+lsdv <- 
+  plm::plm(
+    formula = fml,
+    data = df_design_nocov_observed,
+    index =
+      c(
+        "id",
+        "time"
+      ),
+    effect = "twoways"
+  )
+clubSandwich::coef_test(
+  lsdv,
+  vcov = "CR1",
+  cluster = "id",
+  test = "naive-t"
+)
+```
+
+```{r}
+df_compare <-
+  tibble::tibble(
+    group_i = c(5, 6, 7, 8),
+    did_lsdv =
+      c(
+        mean(lsdv$coefficients[grep("z_it_t_5", names(lsdv$coefficients), value = TRUE)], na.rm = TRUE),
+        mean(lsdv$coefficients[grep("z_it_t_6", names(lsdv$coefficients), value = TRUE)], na.rm = TRUE),
+        mean(lsdv$coefficients[grep("z_it_t_7", names(lsdv$coefficients), value = TRUE)], na.rm = TRUE),
+        mean(lsdv$coefficients[grep("z_it_t_8", names(lsdv$coefficients), value = TRUE)], na.rm = TRUE)
+      ),
+    proportion =
+      c(
+        sum(df_design_nocov_observed$z5_it) / sum(df_design_nocov_observed$z_it),
+        sum(df_design_nocov_observed$z6_it) / sum(df_design_nocov_observed$z_it),
+        sum(df_design_nocov_observed$z7_it) / sum(df_design_nocov_observed$z_it),
+        sum(df_design_nocov_observed$z8_it) / sum(df_design_nocov_observed$z_it)
+      )
+  )
+df_compare
+```
+
+```{r}
+df_compare %>%
+  dplyr::summarize(
+    did_lsdv_average = sum(did_lsdv * proportion)
+  )
+```
+
+### Callaway-Sant'Anna推定
+
+Callaway-Sant'Annaの推定量を用いれば、より詳細な動学的効果を推定し、一様頑健な信頼区間が得られるだけでなく、以下のように、本来の推定対象だった集計値も得られる。
+
+ここでは`did`パッケージのデフォルトを用いている。すなわち、`control_group = nevertreated`とするものである。そのため、修正TWFE推定の結果と似ているが厳密には一致しない。
+
+```{r}
+result_did <- 
+  did::att_gt(
+    yname = "y_it",
+    tname = "time",
+    idname = "id",
+    gname = "group_i",
+    data = df_design_nocov_observed
+  )
+summary(result_did)
+did::ggdid(result_did)
+res <- 
+  did::aggte(
+    MP = result_did, 
+    type = "group"
+  )
+df_cs <- tibble::tibble(
+  group_i = res$egt,
+  did_cs = res$att.egt
+)
+df_compare <-
+  dplyr::left_join(
+    df_compare,
+    df_cs,
+    by = "group_i"
+  )
+df_compare
+```
+
+```{r}
+print(
+  did::aggte(
+    MP = result_did, 
+    type = "simple"
+  )
+)
+```
+
+### 不適切な信頼区間に基づく推定
+
+`cband = FALSE`とした以下の推測は一様信頼区間を計算しておらず、不適切である (Stata版ではデフォルトとなっているので注意)
+
+```{r}
+result_did_invalid <- 
+  did::att_gt(
+    yname = "y_it",
+    tname = "time",
+    idname = "id",
+    gname = "group_i",
+    data = df_design_nocov,
+    bstrap = FALSE,
+    cband = FALSE
+  )
+summary(result_did_invalid)
+```
+
+## 条件付き平行トレンドを必要とするケース
+
+次に、共変量を考慮しないと平行トレンドが成立していないケースの分析を行う。
+
+```{r}
+df_design_cov_observed <- 
+  df_design_cov %>%
+  dplyr::select(
+    id,
+    time,
+    group_i,
+    g5_i,
+    g6_i,
+    g7_i,
+    g8_i,
+    z5_it,
+    z6_it,
+    z7_it,
+    z8_it,
+    z_it,
+    x1_i,
+    x2_i,
+    y_it
+  )
+head(df_design_cov_observed)
+```
+
+### 共変量のない推定
+
+事前トレンド仮定が成立しないため結果が大きく変わる。
+
+```{r}
+result_did_cov <- 
+  did::att_gt(
+  yname = "y_it",
+  tname = "time",
+  idname = "id",
+  gname = "group_i",
+  data = df_design_cov_observed
+)
+summary(result_did_cov)
+```
+``## P-value for pre-test of parallel trends assumption:  0``
+と表示されているように、事前トレンド検定も棄却される。
+```{r}
+did::ggdid(result_did_cov)
+print(
+  did::aggte(
+    MP = result_did_cov, 
+    type = "group"
+  )
+)
+```
+
+特に、処置群平均処置効果の推定は、負になってしまっている。
+```{r}
+print(
+  did::aggte(
+    MP = result_did_cov, 
+    type = "simple"
+  )
+)
+```
+
+### 共変量を含んだ推定
+共変量を`xformla`で指定してやると、共変量を用いた推定が行われる。
+```{r}
+result_did_cov <- 
+  did::att_gt(
+    yname = "y_it",
+    tname = "time",
+    idname = "id",
+    gname = "group_i",
+    data = df_design_cov_observed,
+  xformla = ~ 1 + x1_i + x2_i
+)
+summary(result_did_cov)
+did::ggdid(result_did_cov)
+```
+
+この場合、処置群平均処置効果が適切な符号で推定できている。
+
+```{r}
+print(
+  did::aggte(
+    MP = result_did_cov, 
+    type = "simple"
+  )
+)
+```
+
+なお、以前のデザインに比べ、共変量の値によって影響を受けるのは線形トレンドのみである。そのため、共変量を含んだ推定値は、共変量を含まないデザインにおける推定と定性的に類似した結果となっている。ただし、両者は異なる公式に基づいて計算されており、数値的には一致しない。
+
+```{r}
+res_nocov <- 
+  did::aggte(
+    MP = result_did, 
+    type = "simple"
+  )
+res_cov <-
+  did::aggte(
+    MP = result_did_cov, 
+    type = "simple"
+  )
+  
+tibble::tibble(
+  case = c(
+    "nocov",
+    "cov"
+  ),
+  ATT = c(
+    res_nocov$overall.att,
+    res_cov$overall.att
+  ),
+  se = c(
+    res_nocov$overall.se,
+    res_cov$overall.se
+  )
+)
+```
+
+##  全ての個体が観測期間中に処置を受けてしまう場合
+
+最後に、すべての個体が観測期間中に処置をうける、すなわち`nevertreated`が存在しない場合の分析を行う。
+
+```{r}
+df_design_nyt_observed <- 
+  df_design_nyt %>%
+  dplyr::select(
+    id,
+    time,
+    group_i,
+    g5_i,
+    g6_i,
+    g7_i,
+    g8_i,
+    g10_i,
+    z5_it,
+    z6_it,
+    z7_it,
+    z8_it,
+    z10_it,
+    z_it,
+    x1_i,
+    x2_i,
+    y_it
+  )
+head(df_design_nyt_observed)
+```
+
+### didパッケージでの実装
+
+以下のようにオプションを指定しないと、処置を受けない統制群の欠如でエラーが発生する
+
+```{r}
+try(
+  result_did_nyt <- 
+    did::att_gt(
+      yname = "y_it",
+      tname = "time",
+      idname = "id",
+      gname = "group_i",
+      data = df_design_nyt_observed
+    )
+)
+```
+
+`control_group`を"notyettreated"に指定すると、全ての処置群の統制期間を統制群として扱う場合の結果が得られる。なお、このオプションは最後まで処置を受けない統制群が存在する場合でも同様に使用でき、その場合は「処置を受けない統制群」と「まだ処置を受けていない処置群」の両方が統制群として扱われる。
+
+```{r}
+result_did_nyt <- 
+  did::att_gt(
+    yname = "y_it",
+    tname = "time",
+    idname = "id",
+    gname = "group_i",
+    data = df_design_nyt_observed,
+    control_group = "notyettreated"
+  )
+
+summary(result_did_nyt)
+did::ggdid(result_did_nyt)
+print(
+  did::aggte(
+    MP = result_did_nyt, 
+    type = "group"
+  )
+)
+print(
+  did::aggte(
+    MP = result_did_nyt, 
+    type = "simple"
+  )
+)
+```
+
+### 期間打ち切りによる対処
+
+なお、この場合は`T = 9`で観測を打ち切り、`T = 10`にて最後に処置を受ける群を統制群として扱うことで対処することもできる。なお、本例では処置効果に時系列の異質性を持たないため、結果は大きく変わらない（数値的には、比較となる統制群の期間が異なるため、やはり一致しない）。
+
+```{r}
+result_did_nyt_trunc <- 
+  did::att_gt(
+    yname = "y_it",
+    tname = "time",
+    idname = "id",
+    gname = "group_i",
+    data = df_design_nyt_observed[df_design_nyt_observed$time < 10,],
+    control_group = "nevertreated"
+  )
+
+summary(result_did_nyt_trunc)
+did::ggdid(result_did_nyt_trunc)
+print(
+  did::aggte(
+    MP = result_did_nyt_trunc, 
+    type = "group"
+  )
+)
+print(
+  did::aggte(
+    MP = result_did_nyt_trunc, 
+    type = "simple"
+  )
+)
+```

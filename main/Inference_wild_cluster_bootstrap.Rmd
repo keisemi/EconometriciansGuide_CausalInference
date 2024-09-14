@@ -1,0 +1,593 @@
+---
+title: "第3章　推測・検定の諸問題"
+subtitle: "[R3.1] クラスターブートストラップ"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+ここでは、第3章の3.1節「クラスター相関とクラスター頑健分散推定量」の手法を実装する。
+特に、クラスター相関に頑健な推測を`clubSandwich`パッケージ及び`fwildclusterboot`パッケージを用いて紹介する。
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(ggplot2)
+library(tictoc)
+library(CausalInferenceTextbook)
+library(clubSandwich)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+# 準備
+
+## `fwildclusterboot`の設定
+
+ただし、`fwildclusterboot`は現時点においてCRANからアーカイブされてしまっており、GitHub経由のインストールが必要である。
+ここでは、CRANの最終バージョンリリースに対応しているとされる、0.12版に固定して分析を行う。
+(2024年8月現在：GitHubレポジトリはアクティブであり、CRAN復帰を目指して進行中の様子)
+```{r, include=FALSE}
+library(devtools)
+install_github("s3alfisc/fwildclusterboot@v.0.12")
+```
+
+以下にクラスターの数を変えた、３種類のデザインについて分析を行う。`function_inference`に定義した関数`return_dgp_cluster`は、`N_C`個のクラスターそれぞれに`N`個の観測を生成し、クラスターごとに割り当てられた二項変数`X`、正規分布`N(0,0.1)`に従う誤差項にクラスターごとの正規分布誤差を足した`e`、から、`Y = 0.5 + X * 0 + e`を生成する。
+
+ここで、`X`は最初の`N_C/6`個のクラスターについて`1`を取り、それ以外では`0`をとるとする。すなわち、`1`を取るクラスターがそうでなくクラスターに比べて小さい状況を考えている。クラスターごとの標本サイズは共通とする。
+
+# クラスターの数が少なくないケース
+
+## データの生成
+
+### seedの固定
+
+なお、`fwildclusterboot`では`set.seed()`に加えて、`dqrng::dqset.seed()`を固定する必要がある。
+```{r}
+set.seed(1)
+dqrng::dqset.seed(1)
+```
+
+### 定数の設定
+まずは`N_C`を`100`とする。
+
+```{r}
+N <- 50
+N_C <- 100
+N_M <- 5000
+N_B <- 9999
+```
+
+### データ生成
+
+```{r}
+data_large_cluster <- 
+  return_dgp_cluster(
+    N = N,
+    N_C = N_C
+  )
+```
+
+## 統計量の計算例
+
+`lm`の線形回帰出力について、``clubSandwich::vcov``及び``clubSandwich::coef_test``を用いれば、クラスター頑健分散推定に基づく推測統計が得られる。
+この時、`vcov`では分散推定の自由度補正を選択できる。`CR0`は補正がないもの、`CR3`はジャックナイフ分散推定によるものである。
+
+```{r}
+lm_fit <- 
+  lm(
+    Y ~ X,
+    data = data_large_cluster
+  )
+```
+
+```{r}
+cat(
+  "Heteroskedasticity-robust t-statistics", 
+  summary(lm_fit)$coefficients[2,3], 
+  "\n"
+)
+
+vc_cr0 <- 
+  clubSandwich::vcovCR(
+    lm_fit,
+    cluster = data_large_cluster$C,
+    type = "CR0"
+  )
+
+vc_cr3 <- 
+  clubSandwich::vcovCR(
+    lm_fit,
+    cluster = data_large_cluster$C,
+    type = "CR3"
+  )
+
+cat(
+  "Cluster-robust t-statistics, CR0", 
+  clubSandwich::coef_test(
+    lm_fit,
+    vc_cr0,
+    coefs = "X"
+  )$tstat, 
+  "\n"
+)
+
+cat(
+  "Cluster-robust t-statistics, CR3", 
+  clubSandwich::coef_test(
+    lm_fit,
+    vc_cr3,
+    coefs = "X"
+  )$tstat, 
+  "\n"
+)
+```
+
+`fwildclusterboot::boottest`関数はwild cluster-bootstrapによる推測統計を与える。
+
+```{r}
+p_val_w <-
+  fwildclusterboot::boottest(
+    object = lm_fit,
+    clustid = "C",
+    param = "X",
+    B = N_B,
+    type = "webb"
+  )$p_val
+cat("Wild cluster-bootstrap p-value", p_val_w, "\n")
+```
+
+## シミュレーション比較
+
+`N_C`が100の時、`5000`回のシミュレーションの結果は以下のようになる。
+
+```{r}
+t_w <- 
+  rep(
+    NA,
+    N_M
+  )
+t_cr0 <- 
+  rep(
+    NA,
+    N_M
+  )
+t_cr3 <- 
+  rep(
+    NA,
+    N_M
+  )
+p_cr_w <- 
+  rep(
+    NA,
+    N_M
+  )
+
+tic()
+for (
+  i in 1:N_M
+) {
+
+  data_large_cluster <- 
+    return_dgp_cluster(
+      N = N,
+      N_C = N_C
+    )
+
+  lm_fit <- 
+    lm(
+      Y ~ X,
+      data = data_large_cluster
+    )
+  
+  t_w[i] <- summary(lm_fit)$coefficients[2,3]
+
+  vc_cr0 <- 
+    clubSandwich::vcovCR(
+      lm_fit,
+      cluster = data_large_cluster$C,
+      type = "CR0"
+    )
+  
+  vc_cr3 <- 
+    clubSandwich::vcovCR(
+      lm_fit,
+      cluster = data_large_cluster$C,
+      type = "CR3"
+    )
+
+  t_cr0[i] <- 
+    clubSandwich::coef_test(
+      lm_fit,
+      vc_cr0,
+      coefs = "X"
+    )$tstat
+  
+  t_cr3[i] <- 
+    clubSandwich::coef_test(
+      lm_fit,
+      vc_cr3,
+      coefs = "X"
+    )$tstat
+
+  invisible(
+    capture.output(
+      boot_lm <-
+        fwildclusterboot::boottest(
+          object = lm_fit,
+          clustid = "C",
+          param = "X",
+          B = N_B,
+          type = "webb"
+        )
+      )
+    )
+
+  invisible(
+    capture.output(
+      p_cr_w[i] <- boot_lm$p_val
+     )
+  )
+
+}
+```
+
+それぞれの分散推定に基づく(偽)棄却確率：
+
+```{r}
+result_large <-
+  tibble::tibble(
+    specifications = c(
+      "Heteroskedasticity-robust",
+      "Cluster-robust CR0",
+      "Cluster-robust CR3",
+      "Wild Cluster Bootstrap"
+    ),
+    rejection_probability = c(
+      mean(abs(t_w) >= 1.965, na.rm = TRUE),
+      mean(abs(t_cr0) >= 1.965, na.rm = TRUE),
+      mean(abs(t_cr3) >= 1.965, na.rm = TRUE),
+      mean(p_cr_w < 0.05, na.rm = TRUE)
+    )
+  )
+result_large
+```
+
+以上のように、
+
+- 不均一分散頑健推定量では大幅に偽棄却が生じる
+- CR0では`5`%より数%大きい棄却率、
+- CR3やwild bootstrapでは`5`%を少し超える程度の棄却率
+
+となり、CR3やwild bootstrapでは適切に棄却率が制御できていることがわかる。
+
+# クラスターの数が少ないケース
+
+`N_C`が`20`まで少なくなると、CR0などの補正のない分散推定に基づく偽棄却確率が上がってくる。
+
+## データの生成
+
+### seedの再固定
+
+```{r}
+set.seed(1)
+dqrng::dqset.seed(1)
+```
+
+### 定数の再設定
+```{r}
+N <- 50
+N_C <- 20
+N_M <- 5000
+N_B <- 9999
+```
+
+## シミュレーション比較
+
+`N_C`が20の時、`5000`回のシミュレーションの結果は以下の通り。
+
+
+```{r}
+t_w <- 
+  rep(
+    NA,
+    N_M
+  )
+t_cr0 <- 
+  rep(
+    NA,
+    N_M
+  )
+t_cr3 <- 
+  rep(
+    NA,
+    N_M
+  )
+p_cr_w <- 
+  rep(
+    NA,
+    N_M
+  )
+
+for (
+  i in 1:N_M
+  ) {
+
+  data_small_cluster <- 
+    return_dgp_cluster(
+      N = N,
+      N_C = N_C
+    )
+
+  lm_fit <- 
+    lm(
+      Y ~ X,
+      data = data_small_cluster
+    )
+
+  t_w[i] <- summary(lm_fit)$coefficients[2,3]
+
+  vc_cr0 <- 
+    clubSandwich::vcovCR(
+      lm_fit,
+      cluster = data_small_cluster$C,
+      type = "CR0"
+    )
+
+  vc_cr3 <- 
+    clubSandwich::vcovCR(
+      lm_fit,
+      cluster = data_small_cluster$C,
+      type = "CR3"
+    )
+
+  t_cr0[i] <- 
+    clubSandwich::coef_test(
+      lm_fit,
+      vc_cr0,
+      coefs = "X"
+    )$tstat
+
+  t_cr3[i] <- 
+    clubSandwich::coef_test(
+      lm_fit,
+      vc_cr3,
+      coefs = "X"
+    )$tstat
+
+  invisible(
+    capture.output(
+      boot_lm <- 
+        fwildclusterboot::boottest(
+          object = lm_fit,
+          clustid = "C",
+          param = "X",
+          B = N_B,
+          type = "webb"
+        )
+      )
+    )
+  invisible(
+    capture.output(
+      p_cr_w[i] <- boot_lm$p_val
+    )
+  )
+}
+```
+
+それぞれの分散推定に基づく(偽)棄却確率：
+
+```{r}
+result_small <-
+  tibble::tibble(
+    specifications = c(
+      "Heteroskedasticity-robust",
+      "Cluster-robust CR0",
+      "Cluster-robust CR3",
+      "Wild Cluster Bootstrap"
+    ),
+    rejection_probability = c(
+      mean(abs(t_w) >= 1.965, na.rm = TRUE),
+      mean(abs(t_cr0) >= 1.965, na.rm = TRUE),
+      mean(abs(t_cr3) >= 1.965, na.rm = TRUE),
+      mean(p_cr_w < 0.05, na.rm = TRUE)
+    )
+  )
+result_small
+```
+
+以上のように
+
+- 不均一分散頑健推定量では大幅に偽棄却が生じる
+- CR0の棄却率は`10`%以上に悪化、
+- CR3やwild bootstrapでも`5%`を数%超える棄却率で、wild bootstrapのほうが棄却率が小さい
+
+となり、CR3であっても棄却率が`5`%から乖離し始めていることがわかる。
+
+# クラスターの数が極端に少ないケース
+
+`N_C`が`10`以下である時、クラスターの数はクラスター頑健推定を行うには十分にとは言い難い。
+
+## データの生成
+
+### seedの再固定
+
+```{r}
+set.seed(1)
+dqrng::dqset.seed(1)
+```
+
+### 定数の再設定
+
+```{r}
+N <- 100
+N_C <- 8
+N_M <- 5000
+N_B <- 9999
+```
+
+## クラスターの数が極端に少ない場合の`fwildbootstrap`
+
+なお、`boottest`のデフォルトである`type=rademacher`では、クラスターの数が`10`程度まで少なくなると、とり得る統計量の値に限りがあるとして警告が出る。
+代わりに、`type=webb`を用いると、これは`-1`と`1`に加えて、`-(1/2)^{1/2}`,`-(3/2)^{1/2}`, `(1/2)^{1/2}`, `(3/2)^{1/2}`の6点をウェイトとして与える
+(Webb, M. D. 2014. Reworking wild bootstrap based inference for clustered errors.
+Queen’s University, Department of Economics, Working Paper No. 1315. 
+https://ideas.repec.org/p/qed/wpaper/1315.html)
+
+```{r}
+data_extremely_small_cluster <- 
+  return_dgp_cluster(
+    N = N,
+    N_C = N_C
+  )
+lm_fit <- 
+  lm(
+    Y ~ X,
+    data = data_extremely_small_cluster
+  )
+
+boot_lm <- 
+  fwildclusterboot::boottest(
+    object = lm_fit, 
+    clustid = "C",
+    param = "X",
+    B = N_B
+  )
+
+summary(boot_lm)$statistic
+```
+
+## シミュレーション比較
+
+以下に、`N_C`が`8`の時の`5000`回のシミュレーションの結果を与える。
+
+```{r}
+t_w <- 
+  rep(
+    NA,
+    N_M
+  )
+t_cr0 <- 
+  rep(
+    NA,
+    N_M
+  )
+t_cr3 <- 
+  rep(
+    NA,
+    N_M
+  )
+p_cr_w <-
+  rep(
+    NA,
+    N_M
+  )
+
+for (
+  i in 1:N_M
+  ) {
+  
+  data_extremely_small_cluster <- 
+    return_dgp_cluster(
+      N = N,
+      N_C = N_C
+    )
+
+  lm_fit <- 
+    lm(
+      Y ~ X,
+      data = data_extremely_small_cluster
+    )
+
+  t_w[i] <- summary(lm_fit)$coefficients[2,3]
+
+  vc_cr0 <- 
+    clubSandwich::vcovCR(
+      lm_fit,
+      cluster = data_extremely_small_cluster$C,
+      type = "CR0"
+    )
+
+  vc_cr3 <- 
+    clubSandwich::vcovCR(
+      lm_fit,
+      cluster = data_extremely_small_cluster$C,
+      type = "CR3"
+    )
+
+  t_cr0[i] <- 
+    clubSandwich::coef_test(
+      lm_fit,
+      vc_cr0,
+      coefs = "X"
+    )$tstat
+  
+  t_cr3[i] <- 
+    clubSandwich::coef_test(
+      lm_fit,
+      vc_cr3,
+      coefs = "X"
+    )$tstat
+
+  invisible(
+    capture.output(
+      boot_lm <- 
+        fwildclusterboot::boottest(
+          object = lm_fit,
+          clustid = "C",
+          param = "X",
+          B = N_B,
+          type = "webb"
+        )
+      )
+    )
+  invisible(
+    capture.output(
+      p_cr_w[i] <- boot_lm$p_val
+    )
+  )
+}
+```
+
+それぞれの分散推定に基づく(偽)棄却確率：
+
+```{r}
+result_extremely_small <-
+  tibble::tibble(
+    specifications = c(
+      "Heteroskedasticity-robust",
+      "Cluster-robust CR0",
+      "Cluster-robust CR3",
+      "Wild Cluster Bootstrap"
+    ),
+    rejection_probability = c(
+      mean(abs(t_w) >= 1.965, na.rm = TRUE),
+      mean(abs(t_cr0) >= 1.965, na.rm = TRUE),
+      mean(abs(t_cr3) >= 1.965, na.rm = TRUE),
+      mean(p_cr_w < 0.05, na.rm = TRUE)
+    )
+  )
+result_extremely_small
+```
+
+以上のように
+
+- 不均一分散頑健推定量では大幅に偽棄却が生じる
+- CR0やCR3では棄却率が`10`%を超えてしまう
+- それでも、wild bootstrapを用いれば`5`%以下に抑えることができている
+
+ことがわかる。

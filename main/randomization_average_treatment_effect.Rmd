@@ -1,0 +1,215 @@
+---
+title: "第2章　無作為化実験"
+subtitle: "[R2.2] 平均処置効果の推定 (平均の差)"
+author: "作成者：川口康平"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-03-30'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(CausalInferenceTextbook)
+library(kableExtra)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは、第2章の2.4節「平均処置効果の推定」の手法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_randomized.R`に定義されている。まず標本の潜在結果を生成し、次に、処置ベクトルと顕在結果を生成する。その実現した処置ベクトルと顕在結果をもとに、平均の差にもとづく平均処置効果の推定量を得る。最後に、ネイマンの方法で、平均処置効果の推定量の標準誤差を計算する。
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+はじめに、シードを固定して、個体数`N`、モンテカルロシミュレーションのドローの数`R`、処置群のサイズ`N_1`を設定する。
+
+```{r}
+set.seed(1)
+N <- 1000
+R <- 1000
+N_1 <- 500
+```
+
+つぎに、母集団における平均処置効果`tau_population`を設定する。
+
+```{r}
+tau_population <- 0.2
+```
+
+## データの生成
+
+以上の定数とパラメーターを元に標本の潜在結果を生成する。この操作が一回の無作為抽出にあたる。無作為抽出された標本における平均処置効果`tau`も計算する。
+
+```{r}
+outcome_potential <-
+  tibble::tibble(
+    y_0 = 
+      rnorm(
+        N, 
+        mean = 0, 
+        sd = 1
+      ),
+    y_1 = 
+      rnorm(
+        N, 
+        mean = tau_population, 
+        sd = 1
+      )
+  )
+tau <-
+  outcome_potential %>%
+  dplyr::summarise(
+    tau = mean(y_1 - y_0)
+  ) %>%
+  dplyr::pull(tau)
+
+outcome_potential %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+
+outcome_potential %>%
+  modelsummary::datasummary_skim()
+
+tau
+```
+
+次に、観察されるデータを生成する。そのために、まず処置ベクトル`z`を生成する。この操作が一回の無作為化実験にあたる。さらに、実現した処置ベクトルと潜在結果から、顕在結果を計算する。この部分までの処理は`randomization_fisher_pvalue.Rmd`と同じである。
+
+
+```{r}
+data_realized <-
+  generate_data_randomized(
+    outcome_potential = outcome_potential,
+    N_1 = N_1,
+    seed = 1
+  )
+data_realized %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+data_realized %>%
+  modelsummary::datasummary_skim()
+```
+
+
+# 分析
+
+## 平均の差の計算
+
+観察されたデータにもとづいて結果の平均の差を計算する。これが平均処置効果の推定値となる。
+
+
+```{r}
+mean_1 <- 
+  data_realized %>% 
+  dplyr::filter(
+    z == 1
+  ) %>%
+  dplyr::summarise(
+    y = mean(y)
+  ) %>%
+  dplyr::pull(y)
+mean_0 <- 
+  data_realized %>% 
+  dplyr::filter(
+    z == 0
+  ) %>%
+  dplyr::summarise(
+    y = mean(y)
+  ) %>%
+  dplyr::pull(y)
+n_1 <-   
+  data_realized %>% 
+  dplyr::filter(
+    z == 1
+  ) %>%
+  nrow()
+n_0 <-   
+  data_realized %>% 
+  dplyr::filter(
+    z == 0
+  ) %>%
+  nrow()
+tau_hat <- mean_1 - mean_0
+tau_hat
+```
+
+## 標準誤差の計算
+
+次に、ネイマンの方法で平均処置効果の標準誤差を推定する。
+
+
+```{r}
+var_1 <- 
+  data_realized %>% 
+  dplyr::filter(
+    z == 1
+  ) %>%
+  dplyr::summarise(
+    y = 
+      sum(
+        (y - mean_1)^2 / 
+        (n_1 - 1)
+      )
+  ) %>%
+  dplyr::pull(y)
+var_0 <- 
+  data_realized %>% 
+  dplyr::filter(
+    z == 0
+  ) %>%
+  dplyr::summarise(
+    y = 
+    sum(
+      (y - mean_0)^2 / 
+      (n_0 - 1)
+    )
+  ) %>%
+  dplyr::pull(y)
+var_hat <-
+  var_1 / n_1 + 
+  var_0 / n_0
+var_hat
+se_hat <- sqrt(var_hat)
+se_hat
+```
+
+推定結果を表にまとめる。
+
+```{r}
+data.frame(
+  tau_hat,
+  se_hat,
+  tau,
+  tau_population
+) %>%
+magrittr::set_rownames("Average treatment effect") %>%
+kbl(
+  col.names = c(
+    "Estimate",
+    "S.E.",
+    "True (Sample)",
+    "True (Population)"
+  )
+) %>%
+kable_styling()
+```
+

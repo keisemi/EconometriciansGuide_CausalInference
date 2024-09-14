@@ -1,0 +1,215 @@
+---
+title: "第2章　無作為化実験"
+subtitle: "[R2.4] 層化無作為化実験"
+author: "作成者：川口康平"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: spacelab #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    df_print: paged
+    code_folding: show
+#date: '2022-03-30'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(CausalInferenceTextbook)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは第2章の2.6.1項「層化無作為化実験」の手法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_randomized.R`に定義されている。まず標本の潜在結果を生成し、次に、処置ベクトルと顕在結果を生成する。その実現した処置ベクトルと顕在結果をもとに、層ごとの平均の差にもとづく検定統計量を計算し、最後にブートストラップ法を用いてフィッシャーのp値を数値的に求める。
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+二つの層がある層化無作為化実験を考える。はじめに、シードを固定して、個体数`N`、二つの層の個体数比率`q`、二つの層の傾向スコア`e`、処置群のサイズ`N_1`を設定する。
+
+```{r}
+set.seed(1)
+N <- 2000
+R <- 1000
+q <- c(0.6, 0.4)
+e <- c(0.3, 0.7)
+N_1 <- N * q * e
+```
+
+つぎに、母集団における平均処置効果`tau_population`を設定する。それぞれの層で平均処置効果が異なるものとする。
+
+```{r}
+tau_population <- 
+  c(
+    0.2, 
+    0.3
+  )
+```
+
+## データの生成
+
+以上の定数とパラメーターを元に標本の潜在結果を生成する。この操作が一回の無作為抽出にあたる。無作為抽出された標本における平均処置効果`tau`も計算する。
+
+```{r}
+outcome_potential <-
+  1:2 %>%
+  purrr::map(
+    function(g) {
+      tibble::tibble(
+        g = g,
+        y_0 = 
+          rnorm(
+            N * q[g], 
+            mean = 0, 
+            sd = 0.1
+          ),
+        y_1 = 
+          rnorm(
+            N * q[g], 
+            mean = tau_population[g], 
+            sd = 0.1
+          )
+      )
+    }
+  ) %>%
+  dplyr::bind_rows()
+
+tau <-
+  outcome_potential %>%
+  dplyr::group_by(g) %>%
+  dplyr::summarise(
+    tau = mean(y_1 - y_0)
+  ) %>%
+  dplyr::pull(tau)
+
+outcome_potential %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+
+outcome_potential %>%
+  modelsummary::datasummary_skim()
+
+tau
+```
+
+次に、観察されるデータを生成する。そのために、まず処置ベクトル`z`を生成する。この操作が一回の無作為化実験にあたる。さらに、実現した処置ベクトルと潜在結果から、顕在結果を計算する。この結果作成される`data_realized`が実際に観測されるデータになる。
+処置ベクトルの割当、顕在結果の生成、検定統計量の計算はp値の計算で同じ手続きを繰り返すことになるので、まずこの処理を関数化する。
+
+
+```{r}
+data_realized <-
+  generate_data_stratified(
+    outcome_potential = outcome_potential,
+    N_1 = N_1,
+    seed = 1
+  )
+data_realized %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+data_realized %>%
+  dplyr::filter(
+    g == 1
+  ) %>%
+  modelsummary::datasummary_skim()
+data_realized %>%
+  dplyr::filter(
+    g == 2
+  ) %>%
+  modelsummary::datasummary_skim()
+```
+
+# 分析
+
+## 検定統計量の計算
+
+観測データにもとづいて検定統計量を計算する。この操作もp値の計算で繰り返すことになるので、関数化する。各層に付与するウェイト`lambda`も引数として渡せるようにする。ここでは$\lambda_g = q_g e_g (1 - e_g)$とする。
+
+
+```{r}
+lambda <- 
+  q * 
+  e * 
+  (1 - e)
+t <- 
+  calculate_difference_in_means_stratified(
+    data_realized = data_realized, 
+    lambda = lambda
+  )
+t
+```
+
+# p値の計算
+
+次に、モンテカルロシミュレーションによってp値を計算する。まず、$Y_i^\ast(1)=Y_i^\ast(0)$という帰無仮説の下で成立する潜在結果のデータフレームを作成して、そのデータフレーム上で処置ベクトルを無作為に割り当てなおすことで検定統計量の分布を推定する。
+
+
+```{r}
+outcome_potential_null <-
+  data_realized %>%
+  dplyr::mutate(
+    y_0 = y,
+    y_1 = y
+  )
+
+t_distribution <-
+  1:R %>%
+  purrr::map(
+    .,
+    ~ generate_data_stratified(
+        outcome_potential = outcome_potential_null,
+        N_1 = N_1,
+        seed = .
+      ) %>%
+      calculate_difference_in_means_stratified(
+        data_realized = .,
+        lambda = lambda
+      )
+  ) %>%
+  purrr::reduce(c)
+
+pvalue <- 
+  mean(
+    abs(t_distribution) > 
+    abs(t)
+  )
+pvalue
+```
+
+この検定統計量の分布と実現したデータの下での検定統計量の関係は以下のようになっている。
+
+```{r, echo = FALSE}
+data.frame(
+  statistics = abs(t_distribution)
+) %>%
+ggplot(
+   aes(
+    x = statistics
+    )
+) +
+geom_density(
+  color = color_main
+) +
+geom_vline(
+  xintercept = t,
+  colour = color_main,
+  linetype = 3
+  ) +
+theme_classic()
+```
+
+
+
+

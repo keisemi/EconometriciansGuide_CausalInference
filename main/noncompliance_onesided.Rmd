@@ -1,0 +1,349 @@
+---
+title: "第4章　非遵守者"
+subtitle: "[R4.1] 片側遵守者"
+author: "作成者：川口康平"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-03-30'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(CausalInferenceTextbook)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは、第4章の4.2節「片側非遵守者」のケースにおける処置割当効果と局所平均処置効果の推定方法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_noncompliance.R`に定義されている。まず標本の潜在結果を生成し、次に、処置ベクトルと顕在結果を生成する。このとき、遵守タイプごとに平均処置効果が異なる状況を考える。その実現した処置割当ベクトル、処置受取ベクトルと顕在結果をもとに、処置受取と結果の処置割当効果を推定する。次に、それらの推定値をもちいて、局所平均処置効果を推定する。
+
+非遵守者のケースでは局所平均処置効果を推定するためには処置の除外制約が必要である。この点について確認するために、除外制約が満たされているデータと満たされていないデータを生成し、推定結果を比較する。
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+はじめに、シードを固定して、個体数`N`、モンテカルロシミュレーションのドローの数`R`、処置群のサイズ`N_1`を設定する。遵守タイプの集合は`G`で与える。`bias`は処置割当の除外制約がみたされないときのバイアスの大きさである。
+
+```{r}
+set.seed(1)
+N <- 1000
+N_1 <- 500
+G <- 
+  c(
+    "nc",
+    "co"
+  )
+bias <- 0.5 
+```
+
+つぎに、母集団における平均処置効果`tau_population`を設定する。
+
+```{r}
+tau_population <- 
+  c(
+    1, 
+    2
+  )
+```
+
+
+## データの生成
+
+以上の定数とパラメーターを元に標本の潜在結果を生成する。この操作が一回の無作為抽出にあたる。無作為抽出された標本における平均処置効果`tau`も計算する。遵守タイプは`g`であらわされる。`y_z`は、処置割当の除外制約が満たされていないときに処置の割当が`y_1`に与える変動である。
+
+```{r}
+outcome_potential <-
+  1:length(G) %>%
+  purrr::map(
+    function (n) {
+      df <-
+        tibble::tibble(
+          g = G[n],
+          y_0 = 
+            rnorm(
+              N / length(G), 
+              mean = 0, 
+              sd = 1
+            ),
+          y_1 = 
+            rnorm(
+              N / length(G), 
+              mean = tau_population[n], 
+              sd = 1
+            ),
+          y_z = 
+            rnorm(
+              N / length(G),
+              mean = bias,
+              sd = 1
+            )
+        )
+      return(df)
+    }
+  ) %>%
+  dplyr::bind_rows()
+
+tau <-
+  outcome_potential %>%
+  dplyr::group_by(g) %>%
+  dplyr::summarise(
+    tau = mean(y_1 - y_0)
+  ) %>%
+  dplyr::ungroup() 
+
+outcome_potential %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+
+outcome_potential %>%
+  modelsummary::datasummary_skim()
+
+tau
+```
+次に、観察されるデータを生成する。そのために、まず処置割当ベクトル`z`を生成する。この処置割当ベクトルと遵守タイプにもとづいて、処置受取ベクトル`d`を生成する。この操作が一回の無作為化実験にあたる。実現したデータには遵守タイプ`g`は含まれないことに注意しよう。
+
+
+```{r}
+data_realized_excluded <-
+  generate_data_noncompliance_oneside(
+    outcome_potential = outcome_potential,
+    N_1 = N_1,
+    seed = 1,
+    exclusion = 1
+  ) 
+data_realized_excluded %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+data_realized_excluded %>%
+  modelsummary::datasummary_skim()
+```
+
+
+```{r}
+data_realized_included <-
+  generate_data_noncompliance_oneside(
+    outcome_potential = outcome_potential,
+    N_1 = N_1,
+    seed = 1,
+    exclusion = 0
+  ) 
+data_realized_included %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+data_realized_included %>%
+  modelsummary::datasummary_skim()
+```
+
+
+# 分析
+
+
+## $\tilde{\tau}_D$の手計算
+
+観察されたデータにもとづいて、処置が割り当てられた時の処置の受取確率を計算する。これが処置受取の処置割当効果$\tilde{\tau}_D$の推定値となる。
+
+```{r}
+tau_tilde_d_excluded <-
+  data_realized_excluded %>%
+  dplyr::filter(
+    z == 1
+  ) %>%
+  dplyr::summarise(
+    d = 
+      sum(d) / 
+      length(d)
+  ) %>%
+  dplyr::pull(d)
+tau_tilde_d_excluded
+```
+
+```{r}
+tau_tilde_d_included <-
+  data_realized_included %>%
+  dplyr::filter(
+    z == 1
+  ) %>%
+  dplyr::summarise(
+    d = 
+      sum(d) / 
+      length(d)
+    ) %>%
+  dplyr::pull(d)
+tau_tilde_d_included
+```
+
+## 回帰分析による$\tilde{\tau}_D$の推定
+
+同値な推定量が回帰分析によって得られる。
+
+```{r}
+data_realized_excluded %>%
+  lm(
+    data = .,
+    formula = d ~ z
+  ) %>%
+  modelsummary::modelsummary(
+    fmt = 6
+  )
+```
+
+```{r}
+data_realized_included %>%
+  lm(
+    data = .,
+    formula = d ~ z
+  ) %>%
+  modelsummary::modelsummary(
+    fmt = 6
+  )
+```
+
+## $\tilde{\tau}_Y$の手計算
+
+観察されたデータにもとづいて、結果の平均の差を計算する。これが結果の処置割当効果$\tilde{\tau}_Y$の推定値となる。
+
+```{r}
+tau_tilde_y_excluded <-
+  data_realized_excluded %>%
+  dplyr::group_by(z) %>%
+  dplyr::summarise(
+    y = mean(y)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::summarise(
+    y = 
+      sum(y * z) - 
+      sum(y * (1 - z))
+    ) %>%
+  dplyr::pull(y)
+tau_tilde_y_excluded
+```
+
+```{r}
+tau_tilde_y_included <-
+  data_realized_included %>%
+  dplyr::group_by(z) %>%
+  dplyr::summarise(
+    y = mean(y)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::summarise(
+    y = 
+      sum(y * z) - 
+      sum(y * (1 - z))
+  ) %>%
+  dplyr::pull(y)
+tau_tilde_y_included
+```
+
+## 回帰分析による$\tilde{\tau}_Y$の推定
+
+同値な推定量が回帰分析によって得られる。
+
+```{r}
+data_realized_excluded %>%
+  lm(
+    data = .,
+    formula = y ~ z
+  ) %>%
+  modelsummary::modelsummary(fmt = 6)
+```
+
+```{r}
+data_realized_included %>%
+  lm(
+    data = .,
+    formula = y ~ z
+  ) %>%
+  modelsummary::modelsummary(fmt = 6)
+```
+
+## $\tilde{\tau}_{Y, co} = \tau_{late}$の手計算
+
+次に、結果の処置割当効果を処置受取の処置割当効果で割ることによって局所平均処置効果の推定値を得る。その結果が遵守者の平均処置効果に近しいことを確認する。
+
+```{r}
+tau_late_excluded <-
+  tau_tilde_y_excluded / 
+  tau_tilde_d_excluded
+tau_late_excluded
+```
+
+```{r}
+tau_late_included <-
+  tau_tilde_y_included / 
+  tau_tilde_d_included
+tau_late_included
+```
+
+## 二段階最小二乗法による$\tilde{\tau}_{Y, co} = \tau_{late}$の推定
+
+同値な推定値が二段階最小二乗法によって得られる。推定誤差の推定は回帰分析を用いたほうが効率的である。
+
+```{r}
+data_realized_excluded %>%
+  estimatr::iv_robust(
+    data = .,
+    formula = y ~ d | z
+  ) %>%
+  modelsummary::modelsummary(
+    fmt = 6
+  )
+```
+```{r}
+data_realized_included %>%
+  estimatr::iv_robust(
+    data = .,
+    formula = y ~ d | z
+  ) %>%
+  modelsummary::modelsummary(
+    fmt = 6
+  )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

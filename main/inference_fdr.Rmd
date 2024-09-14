@@ -1,0 +1,507 @@
+---
+title: "第3章　推測・検定の諸問題"
+subtitle: "[R3.4] 多重検定: FDR制御"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+ここでは、第3章の3.2節「多重検定問題とその対処」の手法を実装する。
+特に、3.2.4項「偽検出率制御による検定手法」で解説した解説した多重検定問題における問題の例と、FDR制御手法を紹介する。
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(CausalInferenceTextbook)
+library(foreach)
+library(magrittr)
+library(ggplot2)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+# データ生成
+## 定数の設定
+
+まず、シミュレーションのための定数を設定する。`N`は標本サイズ、`M`は帰無仮説の数、`M_0`は正しい帰無仮説の数、`L`はシミュレーションの回数、`alpha`は有意水準である。
+
+```{r}
+set.seed(1)
+N <- 500
+M <- 60
+M_0 <- 45
+L <- 100
+alpha <- 0.05
+tau_population <- 0.2
+```
+
+## データの生成
+
+はじめに、シードを固定し、擬似的な無作為実験標本を生成する。一様乱数から処置割当変数を生成し、これに平均処置効果`tau_population`かけたものに `r M`個の独立な標準正規分布を加えたものを顕在結果とする。ただし、この時、最初の`r M - M_0`個の顕在結果には処置効果があり、残りの`r M_0`個の顕在結果には処置効果がないとする。
+
+```{r}
+z <- 
+  (
+    runif(N) >= 0.5
+  )
+df_list_1 <-
+  seq_len(M - M_0) %>%
+  purrr::map(
+    ~ tibble::tibble(
+        z = z,
+        y = rnorm(N) + tau_population * z
+      )
+  ) 
+df_list_0 <-
+  seq_len(M_0) %>%
+  purrr::map(
+    ~ tibble::tibble(
+        z = z,
+        y = rnorm(N)
+      )
+  )
+df_list <-
+  c(
+    df_list_1, 
+    df_list_0
+  )
+```
+
+## 検定統計量の計算
+
+それぞれの帰無仮説を検定するために、`r M`個の独立な線形回帰を行う。その結果の回帰係数のt値とp値を計算する。
+
+```{r}
+result_list_1 <-
+  df_list_1 %>%
+  purrr::map(
+    ~ lm(
+        formula = y ~ z, 
+        data = .
+      )
+  )
+result_list_0 <-
+  df_list_0 %>%
+  purrr::map(
+    ~ lm(
+        formula = y ~ z, 
+        data = .
+      )
+  )
+```
+
+```{r}
+t_list_1 <-
+  result_list_1 %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "t value"
+      ]
+  ) %>%
+  purrr::reduce(c)
+t_list_0 <-
+  result_list_0 %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "t value"
+      ]
+  ) %>%
+  purrr::reduce(c)
+```
+
+```{r}
+p_list_1 <-
+  result_list_1 %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "Pr(>|t|)"
+      ]
+  ) %>%
+  purrr::reduce(c)
+p_list_0 <-
+  result_list_0 %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "Pr(>|t|)"
+      ]
+  ) %>%
+  purrr::reduce(c)
+```
+
+
+# 分析
+## FDRの計算
+
+帰無仮説が偽である`r M - M_0`個の検定統計量の絶対値を小さいものから順にプロットする。また、有意水準`r alpha`に対応する棄却域を示す。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(t_list_1),
+        y = t_list_1 %>% abs() %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = abs(
+      qnorm(
+        1 - alpha / 2
+      )
+    ),
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "検定統計量の絶対値"
+  ) +
+  theme_classic()
+```
+
+p値についても同様にプロットすると、以下のようになる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(p_list_1),
+        y = p_list_1 %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = alpha,
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "p値"
+  ) +
+  theme_classic()
+```
+
+次に、帰無仮説が真である`r M_0`個の検定統計量の絶対値を小さいものから順にプロットする。また、有意水準`r alpha`に対応する棄却域を示す。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(t_list_0),
+        y = t_list_0 %>% abs() %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = abs(
+      qnorm(
+        1 - alpha / 2
+      )
+    ),
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "検定統計量の絶対値"
+  ) +
+  theme_classic()
+```
+
+p値についても同様にプロットすると、以下のようになる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(p_list_0),
+        y = p_list_0 %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = alpha,
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "p値"
+  ) +
+  theme_classic()
+```
+
+
+帰無仮説が偽である`r M - M_0`個の帰無仮説のうち、正しく棄却された仮説の検定統計量は以下のとおりである。
+
+```{r}
+t_list_rejected_1 <-
+  t_list_1[
+    t_list_1 %>% abs() > 
+    abs(qnorm(1 - alpha / 2))
+  ]
+t_list_rejected_1
+```
+
+一方、帰無仮説が真である`r M_0`個の帰無仮説のうち、誤って棄却された仮説の検定統計量は以下のとおりである。
+
+```{r}
+t_list_rejected_0 <-
+  t_list_0[
+    t_list_0 %>% abs() > 
+    abs(qnorm(1 - alpha / 2))
+  ]
+t_list_rejected_0
+```
+
+FDRは、棄却された帰無仮説のうち、誤って棄却された帰無仮説の割合である。具体的には、以下のように計算される。
+
+```{r}
+fdr <- 
+  t_list_rejected_0 %>% length() / (
+    t_list_rejected_1 %>% length() +
+    t_list_rejected_0 %>% length()
+  )
+fdr
+```
+
+## FDR補正
+
+それではFDR補正する方法を適用してみよう。
+
+### Benjamini-Hochberg補正
+
+Benjamini-Hochberg法はp値を小さい順に並べて$p^{(1)}, \cdots, p^{(M)}$としたうえで、$l = M$から初めて、$p^{(l)}$が$\alpha l/M$を下回るならば、$p^{(l)}$より小さいp値の検定を全て棄却する。
+
+```{r}
+p_list_sorted <- 
+  c(
+    p_list_1,
+    p_list_0
+  ) %>%
+  sort()
+i <- M
+flag_continue <- TRUE
+while (
+  flag_continue & i > 1
+) {
+  test <- p_list_sorted[i] <= (i / M) * alpha
+  if (
+    test
+  ) {
+    flag_continue <- FALSE
+  }
+  i <- i - 1
+}
+```
+
+この手続きで棄却された帰無仮説の数と、そのp値の閾値は以下のとおりである。
+
+```{r}
+i
+p_list_sorted[i]
+```
+
+帰無仮説が偽である`r M - M_0`個の帰無仮説のうち、正しく棄却された仮説の検定統計量は、p値が個の閾値以下のものであるから、そのp値は以下のとおりである。
+
+```{r}
+p_list_rejected_benjamini_hotchberg_1 <-
+  p_list_1[
+    p_list_1 <= p_list_sorted[i]
+  ]
+p_list_rejected_benjamini_hotchberg_1
+```
+
+帰無仮説が真である`r M_0`個の帰無仮説のうち、誤って棄却された仮説の検定統計量は、p値が個の閾値以下のものであるから、そのp値は以下のとおりである。
+
+```{r}
+p_list_rejected_benjamini_hotchberg_0 <-
+  p_list_0[
+    p_list_0 <= p_list_sorted[i]
+  ]
+p_list_rejected_benjamini_hotchberg_0
+```
+
+したがって、FDRは次のとおりである。
+  
+```{r}
+fdr_benjamini_hotchberg <-
+  p_list_rejected_benjamini_hotchberg_0 %>% length() / (
+    p_list_rejected_benjamini_hotchberg_1 %>% length() +
+    p_list_rejected_benjamini_hotchberg_0 %>% length()
+  )
+fdr_benjamini_hotchberg
+```
+
+先ほどのFDRは`r fdr`であったのに対し、Benjamini-Hochberg法によるFDRは`r fdr_benjamini_hotchberg`とやや低下している。
+
+この点を確認するために、データ生成過程を関数化して、`r L`回のシミュレーションを行い、FDRの期待値を計算する。
+
+```{r}
+p_list_all <-
+  seq_len(L) %>%
+  purrr::map(
+    ~ compute_p_value_mixed_effect(
+        N = N,
+        M = M,
+        M_0 = M_0,
+        seed = .
+      )
+  )
+```
+
+さらに、上記のBenjamini-Hochberg法によるp値の閾値の計算を関数化して、上記のシミュレーション結果に適用する。
+
+```{r}
+p_value_all <-
+  p_list_all %>%
+  purrr::map(
+    ~ compute_p_value_benjamini_hotchberg(
+        p_list_1 = .$p_list_1,
+        p_list_0 = .$p_list_0,
+        alpha = alpha
+      )
+  )
+```
+
+FDRの計算も関数化して、上記のシミュレーション結果に適用する。
+
+```{r}
+fdr_expected <-
+ purrr::map2(
+    p_list_all,
+    p_value_all,
+    ~ compute_fdr(
+        p_list_1 = .x$p_list_1,
+        p_list_0 = .x$p_list_0,
+        p_value = .y
+    )
+ ) %>%
+ purrr::reduce(c) %>%
+ mean()
+
+fdr_expected
+```
+
+このように、期待FDRが`r fdr_expected`と`r alpha`よりも小さい値に制御されていることがわかる。
+
+### Benjamini-Yekutieli補正
+
+先のBenjamini-Hotchberg補正は検定間が独立な場合、あるいはある種の正の相関(Positive Regression Dependence)がある時には理論的にある程度のFDR制御ができることが示されているが、一般の相関についてはFDR制御ができない。一方で以下のBenjamini-Yakutieli法は任意の相関についてFDRを制御できることが示されている。
+
+```{r}
+p_list_sorted <- 
+  c(
+    p_list_1,
+    p_list_0
+  ) %>%
+  sort()
+i <- M
+flag_continue <- TRUE
+while (
+  flag_continue & i > 1
+) {
+  test <- 
+    (
+      p_list_sorted[i] <= (i / M) * alpha / sum(1 / seq_len(M))
+    )
+  if (
+    test
+  ) {
+    flag_continue <- FALSE
+  }
+  i <- i - 1
+}
+```
+
+この手続きで棄却された帰無仮説の数と、そのp値の閾値は以下のとおりである。
+
+```{r}
+i
+p_list_sorted[i]
+```
+
+帰無仮説が偽である`r M - M_0`個の帰無仮説のうち、正しく棄却された仮説の検定統計量は、p値が個の閾値以下のものであるから、そのp値は以下のとおりである。
+
+```{r}
+p_list_rejected_benjamini_yekutieli_1 <-
+  p_list_1[
+    p_list_1 <= p_list_sorted[i]
+  ]
+p_list_rejected_benjamini_yekutieli_1
+```
+
+帰無仮説が真である`r M_0`個の帰無仮説のうち、誤って棄却された仮説の検定統計量は、p値が個の閾値以下のものであるから、そのp値は以下のとおりである。
+
+```{r}
+p_list_rejected_benjamini_yekutieli_0 <-
+  p_list_0[
+    p_list_0 <= p_list_sorted[i]
+  ]
+p_list_rejected_benjamini_yekutieli_0
+```
+
+したがって、FDRは次のとおりである。
+  
+```{r}
+fdr_benjamini_yekutieli <-
+  p_list_rejected_benjamini_yekutieli_0 %>% length() / (
+    p_list_rejected_benjamini_yekutieli_1 %>% length() +
+    p_list_rejected_benjamini_yekutieli_0 %>% length()
+  )
+fdr_benjamini_yekutieli
+```
+
+`r L`回のシミュレーションデータに適用して期待FDRを計算するとの以下の通りとなる。
+
+```{r}
+p_value_all <-
+  p_list_all %>%
+  purrr::map(
+    ~ compute_p_value_benjamini_yekutieli(
+        p_list_1 = .$p_list_1,
+        p_list_0 = .$p_list_0,
+        alpha = alpha
+      )
+  )
+```
+
+```{r}
+fdr_expected <-
+ purrr::map2(
+    p_list_all,
+    p_value_all,
+    ~ compute_fdr(
+        p_list_1 = .x$p_list_1,
+        p_list_0 = .x$p_list_0,
+        p_value = .y
+    )
+ ) %>%
+ purrr::reduce(c) %>%
+ mean()
+
+fdr_expected
+```

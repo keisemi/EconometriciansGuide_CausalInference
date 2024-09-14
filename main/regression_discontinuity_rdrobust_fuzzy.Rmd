@@ -1,0 +1,121 @@
+---
+title: "第7章　回帰非連続デザインの発展的トピック"
+subtitle: "[R7.1] ファジーRD推定"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+library(rdrobust)
+library(CausalInferenceTextbook)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは、第7章の7.1節「ファジー回帰非連続デザイン」で解説した、`rdrobust`パッケージを用いたファジー回帰非連続デザインの推定手法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_rdrobust.R`に定義されている。以下では、Lee (2008) に基づく標本を生成し、`rdrobust`パッケージのオプションの設定、結果の解釈を解説する。
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+はじめに、シードを固定して、個体数`N`を設定する。
+
+```{r}
+set.seed(1)
+N <- 1000
+```
+
+## データの生成
+
+次に、ファジーRDデザインの標本を生成する。データの生成に用いる条件付き期待値関数は`rdrobust`用のシミュレーションと同じくLee (2008) と同様の関数を用いる。シャープデザインとの違いは二点あり、
+
+- 潜在結果関数が操作変数`z`ではなく、非服従を伴う処置変数`d`に基づいて定義される
+- 非服従をともなっても効果が検出できるように効果量を大きくしている
+
+である。大きくした誘導系モデルの効果量、すなわちITTは`0.24`であり、服従者割合は`0.6`であるから、LATEは`0.4`である。ここで、処置変数はプロビットモデルに従うとしている。
+
+```{=latex}
+\begin{align*}
+ d =& 1\{\Psi^{-1}(0.3(1 + 0.5 s) + 0.4z) \leq \epsilon_i\}, \epsilon_i \sim N(0,1)\\
+ z =& 1\{s \geq 0\}, \Psi(x) = P(\epsilon_i \leq x),\\
+ y =& y^*(1)d + y^*(0)(1 - d)
+\end{align*}
+```
+を考える。
+
+Leeデータを生成し、`dgp_lee`とする。
+
+```{r}
+dgp_lee <- 
+  generate_dgp_lee_fuzzy(
+    N = N
+  )
+```
+
+# 分析
+
+## rdrobustパッケージによる推定
+
+シャープデザインの場合と同様に、`rdrobust`関数に結果変数`y`とスコア変数`x`を指定すれば、ITT効果について結果のリストが得られる。
+
+```{r}
+result <- 
+  rdrobust::rdrobust(
+    y = dgp_lee$y,
+    x = dgp_lee$s,
+    all = TRUE
+  )
+summary(result)
+```
+
+同様に、結果変数の代わりに非服従を伴う処置`d`を用いれば、操作変数の処置への効果を得ることができる。
+
+```{r}
+result <- 
+  rdrobust::rdrobust(
+    y = dgp_lee$d,
+    x = dgp_lee$s,
+    all = TRUE
+  )
+summary(result)
+
+```
+
+このとき、`fuzzy`オプションに非服従をともなう処置変数`d`を指定すると、ファジーRDデザインの出力が得られる。
+
+```{r}
+result <- 
+  rdrobust::rdrobust(
+    y = dgp_lee$y,
+    x = dgp_lee$s, 
+    fuzzy = dgp_lee$d,
+    all = TRUE
+  )
+summary(result)
+```
+
+ITTが`0.24`、服従者割合は`0.6`であったため、LATEは`0.4`であった。結果として、データ生成過程と矛盾しない結果が得られた。
+
+

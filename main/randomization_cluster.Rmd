@@ -1,0 +1,367 @@
+---
+title: "第2章　無作為化実験"
+subtitle: "[R2.5] クラスター化無作為化実験"
+author: "作成者：川口康平"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: spacelab #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    df_print: paged
+    code_folding: show
+#date: '2022-03-30'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+library(CausalInferenceTextbook)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは、第2章の2.6.2項「クラスター化無作為化実験」の手法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_randomized.R`に定義されている。まず標本の潜在結果を生成し、次に、処置ベクトルと顕在結果を生成する。クラスターを一つの個体とみなしてその平均処置効果を求める場合 ($\hat{\tau}_c$) と、標本全体の平均処置効果を求める場合 ($\hat{\tau}$)の二通りの方法について考える。最後に、クラスター化無作為化実験のデータを用いて平均処置効果を推定する際のクラスター眼瞼推定誤差を計算する。
+
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+二つの層がある層化無作為化実験を考える。はじめに、シードを固定して、クラスター数`G`を設定し、各クラスターの標本数`N_g`をポワソン分布から抽出する。全体の標本数を`N`とする。処置を割り当てるクラスターの数を`G_1`で指定する。
+
+
+```{r}
+set.seed(1)
+G <- 100
+N_g <- 
+  rpois(
+    G, 
+    99
+  ) + 
+  1
+N <- sum(N_g)
+G_1 <- 50
+```
+
+つぎに、母集団における各クラスターの平均処置効果`tau_g_population`を標準正規分布の絶対値として抽出する。
+
+```{r}
+tau_g_population <- 
+  abs(
+    rnorm(G)
+  )
+tau_g_population
+```
+
+母集団における平均処置効果`tau_population`は、この`tau_g_population`をクラスターの標本数で重み付けした平均として定義される。
+
+```{r}
+tau_population <- 
+  sum(
+    tau_g_population * N_g / 
+    N
+  )
+tau_population
+```
+
+各クラスターを一個体ととみなしたときの母集団における単純平均効果`tau_c_population`は`tau_g_population`の単純平均として定義される。
+
+```{r}
+tau_c_population <- mean(tau_g_population)
+tau_c_population
+```
+
+## データの生成
+
+以上の定数とパラメーターを元に標本の潜在結果を生成する。この操作が一回の無作為抽出にあたる。
+
+```{r}
+outcome_potential <-
+  1:G %>%
+  purrr::map(
+    .,
+    ~ tibble::tibble(
+      g = .,
+      y_0 = 
+        rnorm(
+          N_g[.], 
+          mean = 0, 
+          sd = 1
+        ),
+      y_1 = 
+        rnorm(
+          N_g[.], 
+          mean = tau_g_population[.], 
+          sd = 1
+        )
+    )
+  ) %>%
+  dplyr::bind_rows()
+
+outcome_potential %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+
+outcome_potential %>%
+  modelsummary::datasummary_skim()
+```
+
+
+無作為抽出された標本における各クラスターの平均処置効果`tau_g`も計算する。
+
+```{r}
+tau_g <-
+  outcome_potential %>%
+  dplyr::group_by(g) %>%
+  dplyr::summarise(
+    tau = 
+      mean(
+        y_1 - y_0
+      )
+  ) %>%
+  dplyr::pull(tau)
+
+tau_g
+```
+
+無作為抽出された標本における平均処置効果`tau`も計算する。
+
+```{r}
+tau <-
+  outcome_potential %>%
+  dplyr::summarise(
+    tau = 
+      mean(
+        y_1 - y_0
+      )
+  ) %>%
+  dplyr::pull(tau)
+
+tau
+```
+
+無作為抽出された標本における単純平均効果`tau_c`も計算する。
+
+```{r}
+tau_c <- mean(tau_g)
+tau_c
+```
+
+次に、観察されるデータを生成する。そのために、まず処置ベクトル`z`を生成する。この操作が一回の無作為化実験にあたる。ここではクラスター化無作為化実験を考えるので、処置の割当はクラスター内の個体で完全に一致する。実現した処置ベクトルと潜在結果から、顕在結果を計算する。この結果作成される`data_realized`が実際に観測されるデータになる。
+
+```{r}
+data_realized <-
+  generate_data_cluster(
+    outcome_potential = outcome_potential,
+    G_1 = G_1,
+    seed = 1
+  )
+data_realized %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+```
+
+
+# 分析
+
+## 平均の差による$\hat{\tau}_c$の推定
+
+```{r}
+tau_c_hat <-
+  data_realized %>%
+  dplyr::group_by(g) %>%
+  dplyr::summarise(
+    z = mean(z),
+    y = mean(y)
+    ) %>%
+  dplyr::ungroup() %>%
+  dplyr::summarise(
+    tau = 
+      sum(y * z) / 
+      sum(z) - 
+      sum(y * (1 - z)) / 
+      sum(1 - z)
+  )
+tau_c_hat
+```
+
+## $\hat{\tau}_c$の標準誤差
+
+```{r}
+tau_c_hat_se <-
+  data_realized %>%
+  dplyr::group_by(g) %>%
+  dplyr::summarise(
+    z = mean(z),
+    y = mean(y)
+    ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(z) %>%
+  dplyr::summarise(
+    G_z = length(y),
+    variance = 
+      sum(
+        (y - mean(y))^2 / 
+        (G_z - 1)
+      )
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::summarise(
+    se = 
+      sum(
+        variance / 
+        G_z
+      ) %>% 
+      sqrt()
+  )
+  
+tau_c_hat_se
+```
+
+
+## 回帰分析による$\hat{\tau}_c$の推定
+
+```{r}
+tau_c_hat_regression <-
+  data_realized %>%
+  dplyr::group_by(g) %>%
+  dplyr::summarise(
+    z = mean(z),
+    y = mean(y)
+    ) %>%
+  dplyr::ungroup() %>%
+  lm(
+    data = .,
+    formula = y ~ z
+  ) 
+```
+
+## $\hat{\tau}_c$の推定結果
+
+```{r}
+tau_c_hat_regression %>%
+  modelsummary(
+    fmt = 6
+  )
+```
+
+
+## 平均の差による$\hat{\tau}$の推定
+
+```{r}
+tau_hat <-
+  data_realized %>%
+  dplyr::summarise(
+    tau = 
+      sum(y * z) / 
+      sum(z) - 
+      sum(y * (1 - z)) / 
+      sum(1 - z)
+  )
+tau_hat
+```
+
+## 回帰分析による$\hat{\tau}$の推定
+
+```{r}
+tau_hat_regression <-
+  data_realized %>%
+  dplyr::mutate(
+    z = 
+      z %>%
+      as.integer()
+    ) %>%
+  lm(
+    data = .,
+    formula = y ~ z
+  )
+```
+
+
+## $\hat{\tau}$の推定結果
+
+```{r, warning = FALSE}
+tau_hat_regression %>%
+  modelsummary(
+    vcov = ~ g, 
+    fmt = 6
+  )
+```
+
+## $\hat{\tau}$の標準誤差の手動計算
+
+```{r}
+se_cluster_robust <-
+  data_realized %>%
+  dplyr::mutate(
+    constant = 1,
+    epsilon = tau_hat_regression$residuals
+  ) 
+  
+term_1 <-
+  se_cluster_robust %>%
+  dplyr::select(
+    constant, 
+    z
+  ) %>%
+  as.matrix()
+term_1 <- 
+  crossprod(
+    term_1, 
+    term_1
+  )
+```
+
+```{r}
+term_2 <-
+  se_cluster_robust %>%
+  dplyr::group_split(g) %>%
+  purrr::map(
+    .,
+    function(df) {
+      df <-
+        df %>%
+        dplyr::mutate(
+          z_epsilon = z * epsilon
+        ) %>%
+        dplyr::select(
+          epsilon, 
+          z_epsilon
+        ) %>%
+        dplyr::summarise_all(sum) %>%
+        as.matrix()
+      df <- 
+        crossprod(
+          df, 
+          df
+        )
+    }
+  ) %>%
+  purrr::reduce(`+`)
+```
+
+
+```{r}
+se_cluster_robust <-
+  solve(
+    term_1, 
+    term_2
+  ) %*% 
+  solve(term_1)
+se_cluster_robust %>%
+  diag() %>%
+  sqrt() 
+```

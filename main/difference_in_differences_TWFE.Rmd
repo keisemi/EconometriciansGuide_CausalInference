@@ -1,0 +1,805 @@
+---
+title: "第9章　差の差法の基礎、第10章　差の差法とその周辺の発展的トピック"
+subtitle: "[R9.1、10.1] 2方向固定効果（TWFE）推定"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+ここでは、第9章の9.3節「差の差法の回帰推定量」と第10章の10.1節「より複雑な処置タイミングを伴う差の差法」で解説した2方向固定効果（Two-Way Fixed Effect: TWFE）回帰による推定を実装する。
+特に、TWFE推定量が適切に差の差法推定量となるようなデータ生成過程と、そうでないようなデータ生成過程における挙動を`bacondecomp`パッケージを用いて示し、行うべき修正推定量を示す。`CausalInferenceTextbook`から呼び出している関数は`R/functions_did.R`に定義されている。
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(CausalInferenceTextbook)
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+はじめに、個体数`N`と期間`T`を設定する。
+
+```{r}
+N <- 1000
+T0 <- 4
+T1 <- 6
+T <- T0 + T1
+```
+
+次に、処置効果を生成するパラメータを指定する。
+
+本分析では、二種類のデータ生成過程を考える。一つは、処置が処置群全体に同時に割り当てられるデザインである。
+このときの、個体に関する処置効果を生成する正規分布のパラメータを`mean_tau_i_simul`, `sd_tau_i_simul`と指定する。
+
+```{r}
+mean_tau_i_simul <- 0.05
+sd_tau_i_simul <- 0.2
+```
+
+もう一つは、複数時点で処置が発生し、処置群のなかで処置が段階的に割り当てられていくデザインである。
+このときの、個体に関する処置効果を生成する正規分布のパラメータを`mean_tau_i_multi`, `sd_tau_i_multi`と指定する。
+
+```{r}
+mean_tau_i_multi <- 0.1
+sd_tau_i_multi <- 0.2
+```
+
+このデザインでは、処置割り当てのタイミングごとに異なる符号の効果が発生するように、上のパラメータ(`mean_tau_i_multi`,`sd_tau_i_multi`)に基づく正規分布の絶対値に、効果量の乗数`scale_5`, `scale_6`, `scale_7`, `scale_8`を掛けたものを処置効果とする。
+```{r}
+scale_5 <- 1
+scale_6 <- -2.5
+scale_7 <- -1.75
+scale_8 <- -1
+```
+
+すなわち、$5$期目に割り当てを受ける個体群の処置効果には`r scale_5`が掛けられ、$6$期目に割り当てを受ける個体群の処置効果には`r scale_6`が掛けられるなど、符号や効果量が処置割り当てのタイミングごとに異なるように設計している。
+
+以上のパラメータに基づいて、具体的にデータ生成過程を記述する。まずは、処置が母集団の一部に、一度に割り当てられる場合を考えよう。
+
+## 同時割り当てデータの生成
+
+### 生成過程
+
+統制下の潜在結果関数を以下のように生成する：
+
+\begin{align*}
+ Y^*_{it}(0) =& a_i + b_t + e_{it}
+\end{align*}
+
+ただし、
+
+- 個体固定効果$a_i$: 2020年度大卒女性新卒者初任給の対数正規分布近似から生成する、個体についてiidの分布
+- 時間固定効果$b_t$: 時間についてiidの正規分布
+- 撹乱項$e_{it}$: 個体と時間についてiidの正規分布
+
+とする。
+
+一方で、処置群ダミー$G_i$は固定効果$a_i$について線形のロジットモデル
+
+\begin{align*}
+ \mathbb{P}(G_i|a_i) =& \frac{\exp(\alpha_0 + \alpha_1 a_i)}{1 + \exp(\alpha_0 + \alpha_1 a_i)}
+\end{align*}
+
+
+で与える。
+
+処置は処置期間$t \ge T_0 + 1$に処置群に対して一斉に与えられるものとする。したがって、処置変数$Z_{it}$は
+
+\begin{align*}
+Z_{it} = G_i \cdot 1\{t \ge T_0 + 1\}
+\end{align*}
+
+となる。
+
+処置下の潜在結果は
+
+\begin{align*}
+ Y^*_{it}(1) =& Y^*_{it}(0) + Z_{it} \tau_i \tau_t
+\end{align*}
+
+で与えられ、$\tau_i$は平均`r mean_tau_i_simul`、分散`r sd_tau_i_simul`の正規分布から生成し、$\tau_t$は一様分布$U[0.9,1.1]$から生成する。
+
+このとき処置効果は個体ごと、時間ごとに異質である。ここで、固定された分析期間において、個体を無作為抽出することを考える。
+
+すなわち、数値計算上乱数生成した$\tau_t$をその実現値で固定されたパラメータであるとみなし、母集団における処置群平均処置効果を以下のように考える：
+
+- $T_0 + 1$期以降の各時点$t$における処置群平均処置効果: `r mean_tau_i_simul` $\tau_t$
+- $T_0 + 1$期以降の処置群平均処置効果の期間全体平均:`r mean_tau_i_simul` $\hat{\tau_t}$
+
+ただし、ここで$\hat{\tau_t}$は処置期間における$\tau_t$の実現値平均である。
+
+### データの生成
+
+以上の設定に基づいて、観測の背後にあるデータを生成する。
+
+
+```{r}
+set.seed(1)
+df_design <- 
+  generate_df_no_covariates(
+    N = N, 
+    T = T,
+    T0 = T0,
+    mean_tau_i = mean_tau_i_simul,
+    sd_tau_i = sd_tau_i_simul
+  )
+```
+
+生成した$10$期間の処置群平均処置効果の期間全体平均は以下の通りである。
+
+```{r}
+att_pop <- 
+  df_design %>% 
+  dplyr::filter(
+        time > T0
+  ) %>%
+  dplyr::pull(
+    tau_t
+  ) %>%
+  unique()
+att_pop <-
+  mean(att_pop) * mean_tau_i_simul
+att_pop
+```
+
+個体数`r N`は非常に大きいものの、その標本の中での処置群平均処置効果は、
+母集団における処置群平均処置効果と必ずしも一致しない。実際、処置期間$t > T_0$
+以降における処置群$G_i = 1$について、処置効果$\tau_{it}$の個体と時間について平均を計算すれば、
+母集団における処置群平均処置効果`att_pop`と厳密には一致しないことがわかる。
+
+```{r}
+att_sample <-
+  df_design %>%
+  dplyr::filter(
+    time > T0,
+    g_i == 1
+  ) %>%
+  dplyr::summarise(
+    att_sample = mean(tau_it)
+  )
+att_sample
+```
+
+## 複数時点での処置発生
+
+次に、割り当てが複数期間に渡って個体ごとに別々のタイミングで生じるケースを考える。
+
+### データ生成過程
+
+
+統制下の潜在結果関数を以下のように生成する：
+
+\begin{align*}
+ Y^*_{it}(0) =& a_i + b_t + e_{it}
+\end{align*}
+
+$a_i$と$e_{it}$は単一時点での処置発生の場合と同一であり、
+
+- 個体固定効果$a_i$: 2020年度大卒女性新卒者初任給の対数正規分布近似から生成する、個体についてiidの正規分布
+- 撹乱項$e_{it}$: 個体と時間についてiidの正規分布
+
+とする。一方で、時間効果$b_t$は後々のため単純化し、線形トレンドとする。具体的には、
+\[
+ b_t = t/T
+\]
+とする。
+
+共変量$(x_{1i}, x_{2i})$を$(0, 0)$, $(1, 0)$, $(1, 1)$の三値を取る二項変数のペアとし、処置群の割り当てタイミング、すなわちコーホートは以下の順序付きロジットモデルで確率的に決まるものとする。
+
+すなわち、$T_0 + 1 = 5$期に処置を受ける確率が
+
+
+\begin{align*}
+ \mathbb{P}(G_{5i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{11} x_{1i} + \alpha^{12}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{11}x_{1i} + \alpha^{12}x_{2i})},
+\end{align*}
+
+であり、それ以降の期間については、
+
+\begin{align*}
+\mathbb{P}(G_{6i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})} - 
+ \frac{\exp(\alpha_0 + \alpha^{11} x_{1i} + \alpha^{12}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{11} x_{1i} + \alpha^{12}x_{2i})}\\
+\mathbb{P}(G_{7i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})} - 
+ \frac{\exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{21} x_{1i} + \alpha^{22}x_{2i})}\\
+\mathbb{P}(G_{8i}|x_{1i}, x_{2i}) =& \frac{\exp(\alpha_0 + \alpha^{41} x_{1i} + \alpha^{42}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{41} x_{1i} + \alpha^{42}x_{2i})} - 
+ \frac{\exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})}{1 + \exp(\alpha_0 + \alpha^{31} x_{1i} + \alpha^{32}x_{2i})}
+ \end{align*}
+
+の確率で処置を受ける。
+
+ここで、$G_{5i}, G_{6i}, G_{7i}, G_{8i}$はそれぞれ5期目、6期目、7期目、8期目から処置を受け始める個体を表すダミー変数とする。
+
+このとき処置効果は
+\begin{align*}
+  \tau_{it} = \tau_t \cdot |\tau_i| \cdot (`r scale_5` \cdot G_{5i} + (`r scale_6`) \cdot G_{6i} + (`r scale_7`) \cdot G_{7i} + (`r scale_8`) \cdot G_{8i})
+\end{align*}
+で与えられる。ここで`scale_5`は1、`scale_6`は-2.5、`scale_7`は-1.75、`scale_8`は-1に設定している。
+
+$\tau_i$は平均`r mean_tau_i_multi`、分散`r sd_tau_i_multi`の正規分布から生成し、$\tau_t$は一様分布$U[0.9,1.1]$から生成する。
+
+### データ生成
+
+この設定でデータを生成する。
+
+```{r}
+set.seed(1)
+
+df_design_multiperiod <- 
+  generate_df_multiperiod(
+    N = N,
+    T = T,
+    T1 = T1,
+    T0 = T0,
+    diff_trend = FALSE,
+    mean_tau_i = mean_tau_i_multi,
+    sd_tau_i = sd_tau_i_multi,
+    scale_5 = scale_5,
+    scale_6 = scale_6,
+    scale_7 = scale_7,
+    scale_8 = scale_8
+  )
+```
+
+
+このとき、10期間を固定したうえで、各コーホートの割合を計算すると以下のようになる。
+
+```{r}
+df_design_multiperiod %>%
+  dplyr::group_by(
+   g5_i,
+   g6_i,
+   g7_i,
+   g8_i
+  ) %>%
+  dplyr::summarise(
+   fraction = length(z_it) 
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+   fraction = fraction / sum(fraction)
+  ) %>%
+  dplyr::arrange(
+    g8_i,
+    g7_i,
+    g6_i,
+    g5_i
+  )
+```
+
+
+また、各コーホートの期間平均の処置群平均処置効果は以下のとおりである。
+
+まず、$|\tau_i|$の期待値を計算する。一般に、
+\begin{align*}
+ \mathbb{E}[|\tau_i|] =&  \mathbb{E}[|\tau_i||\tau_i \geq 0]\mathbb{P}(\tau_i \geq 0)+ \mathbb{E}[|\tau_i||\tau_i < 0]\mathbb{P}(\tau_i < 0)\\
+ =&  \mathbb{E}[\tau_i|\tau_i \geq 0]\mathbb{P}(\tau_i \geq 0)- \mathbb{E}[\tau_i|\tau_i < 0]\mathbb{P}(\tau_i < 0)
+\end{align*}
+である。$\tau_i$が従う正規分布の平均を$\mu$、標準偏差を$\sigma$とすれば、切断正規分布の期待値は
+\begin{align*}
+ \mathbb{E}[\tau_i|\tau_i \geq 0] =& \mu + \sigma \frac{\phi((0-\mu)/\sigma)-0}{1 - \Phi((0-\mu)/\sigma)}\\
+ \mathbb{E}[\tau_i|\tau_i < 0] =& \mu - \sigma \frac{0-\phi((0-\mu)/\sigma)}{\Phi((0-\mu)/\sigma)-0}
+\end{align*}
+で与えられる。ただし、$\phi$と$\Phi$はそれぞれ標準正規分布の密度関数、分布関数である。ここで、
+\[
+ \mathbb{P}[\tau_i \geq 0] = \mathbb{P}[(\tau_i - \mu)/\sigma \geq \mu/\sigma] = \Phi(\mu/\sigma)
+\]
+であることを用いれば、
+\begin{align*}
+ \mathbb{E}[|\tau_i|] =&  (\mu + \sigma \frac{\phi((0-\mu)/\sigma)}{1 - \Phi((0-\mu)/\sigma)})*\Phi(\mu/\sigma)\\
+ &- (\mu - \sigma \frac{\phi((0-\mu)/\sigma)}{\Phi((0-\mu)/\sigma)})*(1-\Phi(\mu/\sigma))
+\end{align*}
+である。
+
+```{r}
+mean_abs_tau_i <- 
+  (
+    mean_tau_i_multi + 
+      sd_tau_i_multi * (
+        dnorm((-mean_tau_i_multi) / sd_tau_i_multi)) / 
+      (1 - pnorm((-mean_tau_i_multi) / sd_tau_i_multi))
+   ) * 
+    pnorm(mean_tau_i_multi / sd_tau_i_multi) -
+  (
+    mean_tau_i_multi -
+     sd_tau_i_multi * (
+        dnorm((-mean_tau_i_multi) / sd_tau_i_multi)) / 
+     (pnorm((-mean_tau_i_multi) / sd_tau_i_multi))
+   ) * 
+    (1 - pnorm(mean_tau_i_multi / sd_tau_i_multi))
+```
+
+次に、この$\mathbb{E}[|\tau_{i}|]$をもとに、処置群平均処置効果の期間平均を計算する。
+```{r}
+
+att_pop_multiperiod_group <- 
+  df_design_multiperiod %>% 
+    dplyr::filter(
+      time > T0,
+      g5_i == 1
+    ) %>%
+    dplyr::summarize(
+     group = "5",
+     att_pop_multiperiod = mean(unique(tau_t)) *  (scale_5) * mean_abs_tau_i,
+     fraction_within_group = sum(z_it) / sum(df_design_multiperiod$z_it)
+    )
+
+att_pop_multiperiod_group <- 
+  rbind(
+    att_pop_multiperiod_group,
+    df_design_multiperiod %>% 
+    dplyr::filter(
+          time > T0+1,
+          g6_i == 1
+    ) %>%
+    dplyr::summarize(
+      group = "6",
+      att_pop_multiperiod = mean(unique(tau_t)) * (scale_6) * mean_abs_tau_i,
+      fraction_within_group = sum(z_it) / sum(df_design_multiperiod$z_it)
+    ) 
+  )
+
+att_pop_multiperiod_group <-
+  rbind(
+    att_pop_multiperiod_group, 
+    df_design_multiperiod %>% 
+      dplyr::filter(
+        time > T0+2,
+        g7_i == 1
+      ) %>%
+      dplyr::summarize(
+        group = "7",
+        att_pop_multiperiod = mean(unique(tau_t)) * (scale_7) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_multiperiod$z_it)
+      )
+  )
+att_pop_multiperiod_group <- 
+  rbind(
+    att_pop_multiperiod_group, 
+    df_design_multiperiod %>% 
+      dplyr::filter(
+        time > T0+3,
+        g8_i == 1
+      ) %>%
+     dplyr::summarize(
+        group = "8",
+        att_pop_multiperiod = mean(unique(tau_t)) * (scale_8) * mean_abs_tau_i,
+        fraction_within_group = sum(z_it) / sum(df_design_multiperiod$z_it)
+      )
+  )
+att_pop_multiperiod_group
+```
+
+このように、デフォルトのパラメータ設定であれば、設定の通り5期に処置を受ける群の割合が最も多く、処置群平均処置効果は正の値をとる。6-8期に処置を受ける群は割合が小さく、処置群平均処置効果は負の値をとる。
+
+これを、それぞれのグループの割合について加重平均を取れば、この母集団における処置群平均処置効果の期間平均が計算できる。
+
+```{r}
+att_pop_multiperiod <-
+  att_pop_multiperiod_group$att_pop_multiperiod %*% att_pop_multiperiod_group$fraction_within_group
+att_pop_multiperiod
+```
+
+次に標本の中での処置群平均処置効果をコーホートごとに計算すると、母集団における処置群平均処置効果と厳密には一致しない。ここで`group_i`は統制群(`group_i = 0`)と処置群のうち処置割り当てのタイミング(例えば、5期に処置を受けるグループは`group_i = 5`)を表す変数である。
+
+```{r}
+att_sample_multipleriod_group <- 
+  df_design_multiperiod %>%
+  dplyr::filter(
+    group_i > 0
+  ) %>%
+  dplyr::group_by(
+    group_i
+  ) %>%
+  dplyr::summarise(
+    att_sample = sum(tau_it * (time >= group_i)) / sum(time >= group_i)
+  )
+att_sample_multipleriod_group
+```
+
+標本内の全コーホートの処置群平均処置効果は、個体によって処置を受けるタイミングが異なるので、時点$t$に処置を受けているかどうかのダミー変数$z_{it}$を作り、処置群($z_{it}=1$)について$\tau_{it}$の平均を取れば、以下のように多少異なった数値が得られる。
+
+```{r}
+att_sample_multiperiod <-
+  df_design_multiperiod %>%
+  dplyr::filter(
+    z_it > 0
+  ) %>%
+  dplyr::summarise(
+    att_sample_multiperiod = mean(tau_it)
+  )
+att_sample_multiperiod
+```
+
+# 推定
+
+## 同時割り当てにおける推定
+
+まず、同時割り当てデザインにおける推定を考える。先ほど生成した`df_design`のうち、観測できる変数は以下の通りである。
+```{r}
+df_design_observed <- 
+  df_design %>%
+  dplyr::select(
+    id,
+    time,
+    g_i,
+    z_it,
+    y_it
+  )
+head(df_design_observed)
+```
+### 平均の差による差の差推定量
+
+差の差推定量は以下のように平均の差で求められる。まず、処置群の割合は
+
+```{r}
+df_design_observed %>%
+  dplyr::pull(g_i) %>%
+  mean()
+```
+
+であり、事後期間の処置群と統制群の平均の差は
+
+```{r}
+post <-
+  df_design_observed %>%
+  dplyr::filter(
+    time > T0
+  ) %>%
+  dplyr::summarise(
+    sum(y_it * g_i) / sum(g_i) - sum(y_it * (1 - g_i)) / sum(1 - g_i)
+  ) %>%
+  dplyr::ungroup()
+post
+```
+
+事前期間の処置群と統制群の平均の差は
+
+```{r}
+pre <-
+  df_design_observed %>%
+  dplyr::filter(
+    time <= T0
+  ) %>%
+  dplyr::summarise(
+    sum(y_it * g_i) / sum(g_i) - sum(y_it * (1 - g_i)) / sum(1 - g_i)
+  ) %>%
+  dplyr::ungroup()
+pre
+```
+
+である。したがって、差の差推定量は、事後期間の平均の差と事前期間の平均の差としてノンパラメトリックに求められ、
+
+```{r}
+did <- post - pre
+did
+```
+
+となる。この差の差推定で得られた値`did`は、母集団における処置群処置効果の期間全体平均`att_pop` (`r att_pop`)の不偏推定量の推定値である。
+
+### TWFE推定による差の差推定量
+
+さらに、個体固定効果と時間固定効果を入れたTWFE推定量がこの推定量と一致することも確認できる。統計的推測もTWFE推定量の統計的推測方法を用いてよい。すなわち、以下のようなモデル
+
+\begin{align*}
+ Y_{it} = \mu_i + \theta_t + \tau Z_{it} + \epsilon_{it}
+\end{align*}
+
+の最小二乗推定量を計算し、係数$\tau$を処置群平均処置効果の推定量とすればよい。
+
+```{r}
+lsdv <- 
+  plm::plm(
+    formula = y_it ~ z_it,
+    data = df_design_observed, 
+    index = 
+      c(
+        "id",
+        "time"
+      ),
+    effect = "twoways"
+  )
+clubSandwich::coef_test(
+  lsdv, 
+  vcov = "CR1", 
+  cluster = "id", 
+  test = "naive-t"
+)
+```
+
+## 複数時点割当における推定
+
+次に、複数時点割り当てデザインにおける推定を考える。先ほど生成した`df_design_multiperiod`のうち、観測できる変数は以下の通りである。
+
+```{r}
+df_design_multiperiod_observed <- 
+  df_design_multiperiod %>%
+  dplyr::select(
+    c("id",
+      "time",
+      "group_i",
+      "g5_i",
+      "g6_i",
+      "g7_i",
+      "g8_i",
+      "z5_it",
+      "z6_it",
+      "z7_it",
+      "z8_it",
+      "z_it",
+      "y_it")
+  )
+head(df_design_multiperiod_observed)
+```
+
+### 平均の差による差の差推定量
+
+複数時点に割り当てがある場合、処置群に対してどの統制群を比較するかによって、平均の差を複数定義することができる。
+
+ここでは処置群を、処置を受けたタイミングごとのグループ`group_i`にわけて、ずっと処置を受けない (never treated) 統制群を使った差の差法推定を行う。この結果、標本におけるコーホートごとの処置群平均処置効果とおおむね近い推定値を得ることができる。
+
+```{r}
+trend_control <- 
+  tibble::tibble(
+    group_i = c(5,6,7,8),
+    trend_control = 
+      df_design_multiperiod_observed %>%
+      dplyr::filter(
+        group_i == 0
+      ) %>%
+      dplyr::summarize(
+        trend_5 = 
+          sum(y_it * (time >= 5)) / sum(time >= 5) - 
+          sum(y_it * (time < 5))/ sum(time < 5),
+        trend_6 = 
+          sum(y_it * (time >= 6)) / sum(time >= 6) - 
+          sum(y_it * (time < 6))/ sum(time < 6),
+        trend_7 = 
+          sum(y_it * (time >= 7)) / sum(time >= 7) - 
+          sum(y_it * (time < 7))/ sum(time < 7),
+        trend_8 = 
+          sum(y_it * (time >= 8)) / sum(time >= 8) - 
+          sum(y_it * (time < 8))/ sum(time < 8)
+      ) %>% t()
+)
+
+trend_treated <- 
+  df_design_multiperiod_observed %>%
+    dplyr::filter(
+      group_i > 0
+    ) %>%
+    dplyr::group_by(
+      group_i
+    ) %>%
+    dplyr::summarise(
+      trend_treated = 
+        sum(y_it * (time >= group_i)) / sum(time >= group_i) - 
+        sum(y_it * (time < group_i)) / sum(time < group_i),
+      proportion = sum(z_it)/sum(df_design_multiperiod$z_it)
+    )
+
+df_did <- 
+  dplyr::left_join(
+    trend_control,
+    trend_treated, 
+    by="group_i"
+  )
+
+
+df_did <-
+  df_did %>%
+  dplyr::mutate(
+    did_dif = trend_treated - trend_control
+  )
+
+df_did <-
+  df_did %>% 
+  dplyr::select(
+    group_i,
+    did_dif,
+    proportion  
+  )
+
+df_did <- 
+  df_did %>%
+  dplyr::left_join(
+  att_sample_multipleriod_group,
+  by = "group_i"
+)
+
+df_did
+```
+
+これらの推定の加重平均をとれば、
+
+```{r}
+cbind(
+  df_did %>% 
+    dplyr::summarize(
+      did_dif_average = sum(did_dif * proportion)
+    ),
+  att_sample_multiperiod
+)
+```
+
+標本内の処置群平均処置効果と近い値を得ることができる。
+
+### TWFE推定による誤った推定
+
+このとき、以下のようなTWFEモデルの推定は、処置群全体での処置群平均処置効果をうまく推定することができず、負の値をとってしまう。
+
+\begin{align*}
+ Y_{it} = \mu_i + \theta_t + \tau Z_{it} + \epsilon_{it}
+\end{align*}
+
+```{r}
+lsdv <- 
+  plm::plm(
+    formula = y_it ~ z_it,
+    data = df_design_multiperiod_observed, 
+    index = c(
+      "id",
+      "time"
+    ),
+    effect = "twoways"
+  )
+clubSandwich::coef_test(
+  lsdv, 
+  vcov = "CR1", 
+  cluster = "id", 
+  test = "naive-t"
+)
+```
+
+### Goodman-baconによる分解
+
+これは、先に処置を受けた群を統制群とした差の差推定量の値が全て負の値をとり、全体の処置群平均処置効果推定の符号を反転させてしまっているからである。Goodman-baconによる分解を行えばこの点を確認できる。
+
+```{r}
+result <- 
+  bacondecomp::bacon(
+    formula = y_it ~ z_it, 
+    data = df_design_multiperiod_observed, 
+    id_var = "id", 
+    time_var = "time"
+  )
+```
+上の表は、TWFE推定が三種類の差の差推定量`avg_est`の、`weight`を荷重とした加重平均になっていることを表している。ここで、`Treated vs Untreated`は観測期間中に処置を受けていない統制群に対して処置群を比較する通常の差の差推定であり、`Earlier vs Later Treated`はまだ処置を受けていない処置群(`Later`)を統制群として、今ちょうど処置を受けた処置群(`Earlier`)と比較する差の差推定である。これらは、適切な平行トレンド仮定の下で、いずれも処置群平均処処置効果の不偏推定量となりうる。一方で、`Later vs Earlier Treated`は、今ちょうど処置を受けた処置群(`Later`)に対して、既に処置を受けた処置群(`Earlier`)の「処置を受けている状態の顕在結果」をあたかも統制群かのように比較するものである。この`Later vs Earlier Treated`による比較は、必ずしも処置群平均処置効果の推定と解釈することができない。
+
+```{r}
+result %>%  
+  ggplot() + 
+  aes(
+    x = weight, 
+    y = estimate, 
+    color = factor(type)
+  ) + 
+  labs(
+    x = "Weight", 
+    y = "Estimates", 
+    color = "Type"
+  ) + 
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_classic() +
+  theme(
+    legend.position = "bottom"
+  )
+```
+
+上の図は、それぞれの差の差推定を種別`Type`ごとに色分けしてプロットしたものである。上の表で示した通り、必ずしも処置群平均処置効果と解釈できるとは限らない`Later vs Earlier Treated`の差の差推定が負の値を取っており、これらの不適切な比較に荷重が与えられることによって、母集団における処置群平均処置効果の期間平均`att_pop_multiperiod` (`r att_pop_multiperiod`)と大きく乖離している。
+
+### 修正TWFE推定
+
+この問題を解決するためには、処置時点での層別を適切に行った回帰、つまり、処置を受け始めるタイミングのグループと処置期間の時点について、飽和した回帰を行えばよい。
+
+具体的には、処置タイミングのコーホートダミー`G_{5i},...,G_{8i}`、時点ダミー`1\{t = t'\}'、さらにそれらの処置時点に対応する交差項をすべて入れた以下のような回帰を行えばよい。
+\begin{align*}
+ Y_{it} =& \beta + \sum_{k=5}^{8} \mu_k G_{ki} + \sum_{t'=2}^{T} \theta_{t'} 1\{t = t'\} + \sum_{k=5}^{8} \sum_{t'=k}^{T} \tau_{kt'} G_{ki} 1\{t=t'\} + \epsilon_{it} 
+\end{align*}
+
+このコーホートダミーと時点ダミーの交差項`G_{kt} 1\{t=t'\}`はコーホート`k`に属する個体`i`が処置時点`t'`に到達して処置を割り当てられているかを表すダミー変数であるから、以下に処置割当を表す`z_it_t_kt'`として生成する。これらの処置割当変数`z_it_505`...`z_it_810`に加え、コーホートダミー、時点ダミーをすべて入れた回帰を行えば、各グループの、各処置時点ごとにおける処置群平均処置効果を$\tau_{kt}$の最小二乗推定量として推定することができる。なお、コーホートダミーの代わりに個体ダミーを入れても同値な結果が得られるため、以下では個体ダミーを入れたTWFE推定を行う。
+
+```{r}
+df_design_multiperiod_observed$z_it_t <- 
+  df_design_multiperiod_observed$z_it * 
+  df_design_multiperiod_observed$time +
+  df_design_multiperiod_observed$z_it * 
+  df_design_multiperiod_observed$group_i*100
+df_design_multiperiod_observed <- 
+  fastDummies::dummy_cols(
+    df_design_multiperiod_observed,
+    select_columns = "z_it_t",
+  )
+df_design_multiperiod_observed <- 
+  df_design_multiperiod_observed %>% 
+  dplyr::select(-"z_it_t_0")
+
+fml <- as.formula(
+  paste("y_it ~ ",
+        paste(
+          grep(
+            "z_it_t_", 
+            names(df_design_multiperiod_observed), 
+            value = TRUE),
+          collapse = "+"
+        )
+      )
+)
+        
+                     
+lsdv <- 
+  plm::plm(
+    formula = fml,
+    data = df_design_multiperiod_observed,
+    index =
+      c(
+        "id",
+        "time"
+      ),
+    effect = "twoways"
+  )
+
+clubSandwich::coef_test(
+  lsdv,
+  vcov = "CR1",
+  cluster = "id",
+  test = "naive-t"
+)
+```
+
+得られた係数について、処置タイミングのグループごとに集計してやれば、先の差の差法推定(`did_dif`)と近しい値が得られる。
+
+```{r}
+df_compare <-
+  tibble::tibble(
+    group_i = c(5,6,7,8),
+    did_lsdv =
+      c(
+        mean(lsdv$coefficients[grep("z_it_t_5",names(lsdv$coefficients),value=TRUE)], na.rm=TRUE),
+        mean(lsdv$coefficients[grep("z_it_t_6",names(lsdv$coefficients),value=TRUE)], na.rm=TRUE),
+        mean(lsdv$coefficients[grep("z_it_t_7",names(lsdv$coefficients),value=TRUE)], na.rm=TRUE),
+        mean(lsdv$coefficients[grep("z_it_t_8",names(lsdv$coefficients),value=TRUE)], na.rm=TRUE)
+      ),
+    did_dif = 
+      trend_treated$trend_treated - trend_control$trend_control
+  )
+df_compare
+```
+
+これらの値は必ずしも有限標本で厳密には一致しない。これは、修正TWFE推定の回帰には、
+never-treatedのみならず、not-yet-treatedとの比較も一部含まれるためである。
+
+これらの加重平均をとれば、
+```{r}
+df_compare$proportion <- 
+  df_did$proportion
+df_compare %>%
+  dplyr::summarize(
+    did_lsdv_average = sum(did_lsdv * proportion),
+    did_dif_average = sum(did_dif * proportion)
+  )
+```
+
+修正TWFE推定により、差の差法推定の推定値`did_dif_average`とおおむね類似した推定値を得ることができた。

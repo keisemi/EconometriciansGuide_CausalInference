@@ -3,6 +3,8 @@ Type: Package
 Title: Causal Inference Textbook Web Appendix
 Version: 0.0.1
 Author: Kohei kawaguchi and Masayuki Sawada
+Description: This is the support repository for the Causal Inference Textbook.
+License: GPL (>= 2)
 Encoding: UTF-8
 LazyData: true
 RoxygenNote: 7.3.2

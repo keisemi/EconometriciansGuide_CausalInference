@@ -1,0 +1,261 @@
+---
+title: "第6章　回帰非連続デザインの基礎"
+subtitle: "[R6.1] シャープRD推定"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+library(rdrobust)
+library(rddensity)
+library(CausalInferenceTextbook)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは、第6章の6.5節「回帰非連続推定量のためのパラメータ選択と統計的推測」で解説した、`rdrobust`パッケージを用いたシャープ回帰非連続デザインの推定手法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_rdrobust.R`に定義されている。以下では、Lee (2008)に基づく標本を生成し、`rdrobust`パッケージのオプションの設定、結果の解釈を解説する。合わせて、近傍無作為化の検証過程である密度検定を`rddensity`パッケージに基づいて行う。
+
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+はじめに、シードを固定して、個体数`N`を設定する。
+
+```{r}
+set.seed(1)
+N <- 500
+```
+
+## データの生成
+
+次に、Lee (2008) における潜在結果の条件付き期待値関数を近似したRDデザインの標本を生成する。CCT (2014)などに従い、スコア`s`は`2*Beta(2,4) - 1`に従うものとする。この分布は、以下に示すように処置側に裾が長くなっており、必然的に処置群よりも統制群の観測が多くなる。
+
+```{r}
+plot <- 
+  data.frame(
+    x = 
+      c(
+        -1, 
+        1
+      )) %>%
+  ggplot(
+    aes(
+      x = x
+      )
+    ) + 
+  stat_function(
+    fun = 
+      function(x) {
+        dbeta(
+          x = (x + 1)/2, 
+          shape1 = 2, 
+          shape2 = 4
+        )
+      }
+    ) + 
+  labs(
+    y = "Density"
+  ) +
+  theme_classic()
+plot
+```
+
+観測される結果変数は、`specify_mu_lee`関数に指定したような、スコアの５次関数に正規分布のノイズが追加されたものとする。これは、Lee (2008)の得票シェアを従属変数としたFigure 4 (a)に対応するデータを、得票率差が0.99以下かつ-0.99以上の標本に限った上で、５次関数によってフィットさせたものである。
+
+```{r}
+plot <- 
+  data.frame(
+    x = 
+      c(
+        -1, 
+        1
+      )
+  ) %>%
+  ggplot(
+    aes(
+      x = x
+    )
+  ) + 
+  stat_function(
+    fun = specify_mu_lee,
+    geom = "point"
+  ) + 
+  labs(
+    y = "Regression function",
+    x = "Score"
+  ) +
+  theme_classic()
+plot
+```
+
+Leeデータを生成し、`dgp_lee`とする。
+
+```{r}
+dgp_lee <- 
+  generate_dgp_lee(
+    N = N
+  )
+```
+
+以下の通り、処置群・制御群の単純平均差は`0.63 - 0.26 = 0.37`だが、スコア周りの左極限と→極限を比較した真の効果は`0.52 - 0.48 = 0.04`となっており、一致しない。単純平均の差はスコアの閾値周りの近傍での比較になっていないからである。
+
+```{r}
+mean_y <-
+  dgp_lee %>%
+    dplyr::group_by(d) %>%
+    dplyr::summarize(
+      mean_y = mean(y)
+    ) %>%
+  dplyr::pull(mean_y) 
+mean_y  %>%
+  kbl() %>%
+  kable_styling()
+
+lim_mean_y <-
+  data.frame(
+    d = c(
+      FALSE, 
+      TRUE
+    ),
+    mean_y = c(
+      specify_mu_lee(
+        s = -1.e-30
+      ),
+      specify_mu_lee(
+        s = 0
+      )
+    )
+  )
+lim_mean_y %>%
+  kbl() %>%
+  kable_styling()
+```
+
+# 分析
+
+## rdrobustパッケージによる推定
+
+`rdrobust`関数に結果変数`y`とスコア変数`x`を指定すれば、結果のリストが得られる。他の回帰分析のパッケージのようにフォーミュラを用いた定式化ができないのが現時点での`rdrobust`の不便な点の一つである。
+
+```{r}
+result <- 
+  rdrobust::rdrobust(
+    y = dgp_lee$y,
+    x = dgp_lee$s
+  )
+```
+
+推定結果は以下のようにテクストとして表示される。`modelsummary`などによるレポーティングに対応していない点も不便な点の一つである。
+
+```{r}
+summary(result)
+```
+
+推定時にオプションを指定しなかった場合には、従来型 (Conventional)な推定量と標準誤差、それからバイアスの漸近誤差に対して頑健 (Robust) な標準誤差のみが出力される。一方、下記のようにオプションとして `all = TRUE` を渡せば、バイアス修正済 (Bias-Corrected) 推定量もまとめて出力される。出力される標準誤差は従来型とバイアス修正済みの行で同じ値に、推定値はバイアス修正済みと頑健の行で同じ値になっている。
+
+```{r}
+result <- 
+  rdrobust::rdrobust(
+    y = dgp_lee$y,
+    x = dgp_lee$s, 
+    all = TRUE
+  )
+summary(result)
+```
+
+また、デフォルトで、最適バンド幅は推定された平均二乗誤差を最小化するように選択され、カーネル関数は三角カーネルが選択される。
+
+なお、上記の例では`rho = 0.645`、すなわち、バイアス修正用のバンド幅が最終的に推定に用いられるバンド幅に比べてかなり小さいものが最適として選ばれている。ここで、`rho = 1`のオプションを指定すると、バイアス修正と最終的な推定のいずれでも同じバンド幅を用いるように要求することができる。
+
+```{r}
+result <- 
+  rdrobust::rdrobust(
+    y = dgp_lee$y,
+    x = dgp_lee$s, 
+    all = TRUE,
+    rho = 1
+  )
+summary(result)
+```
+
+なお、このときはバイアス修正から推定という二段階を経なくとも、局所二次回帰を行ったときにMSE最適となるようにバンド幅を選べば、数値的に同値となることが知られている。すなわち、下記のようにlocal-quadraticを指定`p = 2`して、バンド幅を共通のものとすれば、`Conventional`に現れる推定結果が`rho = 1`の場合の`Robust`推定結果と同一なものになる。
+
+```{r}
+result <- 
+  rdrobust::rdrobust(
+    y = dgp_lee$y,
+    x = dgp_lee$s, 
+    all = TRUE,
+    p = 2,
+    h = result$bws[1,1],
+    b = result$bws[1,1]
+  )
+summary(result)
+```
+
+
+## rdplotによる描写
+
+RD推定では、実際の推定値に加えて、処置側・統制のそれぞれで別々にフィットさせた推定値のプロットを、ビン平均値のプロットに組み合わせる作図が好まれる。これは、`rdplot`関数によって容易に実現できる。
+
+```{r}
+rdrobust::rdplot(
+  y = dgp_lee$y,
+  x = dgp_lee$s
+)
+```
+
+ビンの区切り方は`binselect`オプションを指定することで変えられる。`es`で始まる選択肢はx軸を等幅に区切る方法で、`qs`で始まる選択肢はスコア変数の分位数で区切る方法である。ビンの数は、平均二乗誤差を最小化する方法や、生データの分散をビン平均値の分散で近似するように選ぶような方法が選択できる。
+
+ここで、`es`または`qs`はいずれもサポート全体の平均二乗誤差を最小化するようにビン数を選ぶ方法である。`es`は等間隔でビンを区切るため、極端に少ない観測の平均をその他の平均と同等であるかのように見せる恐れがある。`qs`のビン選択では、各ビンに同じ観測数が入るので、そのような問題を避けることができる。
+
+```{r}
+rdrobust::rdplot(
+  y = dgp_lee$y,
+  x = dgp_lee$s,
+  binselect = "es"
+)
+```
+
+実際、`qs`のビンの位置は、`es`のビンの位置に比べ、観測の多い閾値の周辺に集積していることがわかる。
+このため、`qs`によるプロットは下記のように観測の多い点に集中してビンを区切るため、プロットとして必ずしも見やすいものが出力されるとは限らない。したがって、`qs`によるビン選択を頑健性確認として参照しつつも、`es`によるビン選択をその限界に注意した上で用いることが考えられる。
+
+```{r}
+rdrobust::rdplot(
+  y = dgp_lee$y,
+  x = dgp_lee$s,
+  binselect = "qs"
+)
+```
+
+なお、デフォルトは`esmv`であり、等間隔ビンにおいて生データの分散をビン平均値の分散で近似する決定方法である。
+
+```{r}
+rdrobust::rdplot(
+  y = dgp_lee$y,
+  x = dgp_lee$s
+)
+```

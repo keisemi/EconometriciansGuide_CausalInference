@@ -1,0 +1,1131 @@
+---
+title: "第3章　推測・検定の諸問題"
+subtitle: "[R3.2、3.3] 多重検定: FWER制御"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+ここでは、第3章の3.2節「多重検定問題とその対処」の手法を実装する。
+特に、3.2.2項「FWERを制御する検定手法」と3.2.3項「ボンフェローニ検定の改善手法」で解説した多重検定問題における問題の例と、FWER制御手法を紹介する。
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(CausalInferenceTextbook)
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+color_main <- scales::viridis_pal(option = "C")(1)
+set.seed(1)
+```
+
+# データ生成
+
+## 定数の設定
+
+標本サイズ`N`の標本に対して処置を無作為に割り当てて、`M`個の顕在結果への平均処置効果の存在を検定する問題を考える。以下では、二種類のデータ生成過程を考える。まず、全ての帰無仮説が正しい場合を考え、FWERの制御を行う。次に、`M`個の帰無仮説のうち、`M_F`個の帰無仮説が誤っており、`M-M_F`個の帰無仮説が正しい場合において、FWERと検出力を計算する。検定のサイズは`alpha`とする。また、FWERと検出力を計算するためのシミュレーション回数を`L`とする。
+
+
+```{r}
+N <- 300
+M <- 30
+M_F <- 10
+L <- 100
+alpha <- 0.05
+```
+
+
+## すべての帰無仮説が真であるデータの生成
+
+まず、`M`個の顕在結果は、処置の割り当てと独立に標準正規分布から生成し、顕在結果$m$に対する処置効果が0だという帰無仮説について、それらの帰無仮説はすべて真である場合を考える。
+
+```{r}
+z_allnull <-
+  (
+    runif(N) >= 0.5
+  )
+df_list_allnull <-
+  seq_len(M) %>%
+  purrr::map(
+    ~ tibble::tibble(
+      z = z_allnull,
+      y = rnorm(N)
+    )
+  )
+```
+
+### 統計量の計算
+
+これらの帰無仮説を検定するために、それぞれの顕在結果に対して独立なt検定を行うことを考える。
+
+```{r}
+result_list_allnull <-
+  df_list_allnull %>%
+  purrr::map(
+    ~ lm(
+        formula = y ~ z,
+        data = .
+      )
+  )
+```
+
+そのt統計量を取得する。
+
+```{r}
+t_list_allnull <-
+  result_list_allnull %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "t value"
+      ]
+  ) %>%
+  purrr::reduce(c)
+```
+
+各統計量のp値も取得しておく。
+
+```{r}
+p_list_allnull <-
+  result_list_allnull %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "Pr(>|t|)"
+      ]
+  ) %>%
+  purrr::reduce(c)
+```
+
+### 多重検定による第一種の過誤の制御失敗
+
+各検定統計量の値を小さいものから大きいものに並べて、その値と`r alpha`水準の臨界値をプロットすると、以下のようになる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(t_list_allnull),
+        y = t_list_allnull %>% abs() %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = abs(
+      qt(
+        1 - alpha / 2,
+        df = N - 2
+      )
+    ),
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "検定統計量の絶対値"
+  ) +
+  theme_classic()
+```
+
+p値についても同様にプロットすると、以下のようになる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(p_list_allnull),
+        y = p_list_allnull %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = alpha,
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "p値"
+  ) +
+  theme_classic()
+```
+
+このt検定のうち、`r alpha`の水準で帰無仮説を棄却しているものは以下のとおりである。
+
+```{r}
+t_rejected_allnull <-
+  t_list_allnull %>%
+  abs() %>%
+  .[
+    . > 
+      abs(
+        qt(
+          1 - alpha / 2,
+          df = N - 2
+          )
+      )
+  ]
+t_rejected_allnull
+```
+このように、全ての帰無仮説が正しい場合であっても、異なる顕在結果について検定を繰り返すと、第一種の過誤が生じやすくなる。
+
+## 偽である帰無仮説を含むデザイン
+
+次に、偽であるような帰無仮説を含むデザインを生成する。すなわち、`M - M_F`個の帰無仮説が偽であるようなデータを生成し、仮説検定を行い、その検定統計量を計算しておく。
+
+```{r}
+z_somealt <-
+  (
+    runif(N) >= 0.5
+  )
+df_list_null_somealt <-
+  seq_len(M-M_F) %>%
+  purrr::map(
+    ~ tibble::tibble(
+      z = z_somealt,
+      y = rnorm(N)
+    )
+  )
+df_list_alternative_somealt <- 
+  seq_len(M_F-2) %>%
+  purrr::map(
+    ~ tibble::tibble(
+      z = z_somealt,
+      y = rnorm(N) + 0.3*z_somealt
+    )
+  )
+
+df_list_alternative_somealt <- c(
+  df_list_alternative_somealt,
+  seq(M_F-1,M_F) %>%
+  purrr::map(
+    ~ tibble::tibble(
+      z = z_somealt,
+      y = rnorm(N) + 0.5*z_somealt
+    )
+  )
+)
+```
+
+```{r}
+result_list_null_somealt <-
+  df_list_null_somealt %>%
+  purrr::map(
+    ~ lm(
+        formula = y ~ z,
+        data = .
+      )
+  )
+
+result_list_alternative_somealt <-
+  df_list_alternative_somealt %>%
+  purrr::map(
+    ~ lm(
+        formula = y ~ z,
+        data = .
+      )
+  )
+```
+
+
+# 分析
+
+## すべての帰無仮説が真である場合の分析
+### Bonferroni補正
+#### p値の有意水準を補正する方法
+
+Bonferroni補正では、各検定の有意水準を$\alphda=$`r alpha`から$\alpha/M$`r alpha/M`に下げることで、第一種の過誤の制御を行う。この補正を行った場合、各検定の統計量の値を小さいものから大きいものに並べて、その値と補正された有意水準をプロットすると、以下のようになる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(p_list_allnull),
+        y = p_list_allnull %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = alpha / M,
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "p値"
+  ) +
+  theme_classic()
+```
+
+このt検定のうち、`r alpha/M`の水準で帰無仮説を棄却しているものは以下のとおりである。
+
+```{r}
+p_rejected_allnull_bonferonni <-
+  p_list_allnull %>%
+  .[
+    . < alpha / M 
+  ]
+p_rejected_allnull_bonferonni
+```
+同じことは、Rの`p.adjust`関数を使っても実現できる。この関数にp値のリストを与え、`method`オプションに`bonferrorni`を指定すると、p値に`M`をかけた数字（が1を超えるなら1）が返ってくる。この値が有意水準`r alpha`を下回っているか見るかを確認すればよい。
+
+
+```{r}
+p_adjusted_allnull_bonferroni <-
+  p.adjust(
+    p = p_list_allnull,
+    method = "bonferroni"
+  )
+p_adjusted_allnull_bonferroni
+
+p_adjusted_allnull_bonferroni -
+  ifelse(
+    p_list_allnull * M > 1,
+    1,
+    p_list_allnull * M
+  )
+```
+
+#### 検定統計量の棄却域の補正による方法
+
+同じことは、棄却域を直接補正しても達成できる。このとき、自由度補正済みのt分布の上側`r alpha/M`点を求める必要がある。
+
+まず、プロットは以下のようになる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(t_list_allnull),
+        y = t_list_allnull %>% abs() %>% sort()
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = abs(
+      qt(
+        1 - alpha / (2 * M),
+        df = N - 2
+      )
+    ),
+    color = "red"
+  ) +
+  labs(
+    x = "検定統計量の順位",
+    y = "検定統計量の絶対値"
+  ) +
+  theme_classic()
+```
+
+帰無仮説を棄却する検定統計量の値は以下のとおりである。
+
+```{r}
+t_rejected_allnull_bonferonni_direct <-
+  t_list_allnull %>%
+  abs() %>%
+  .[
+    . > 
+      abs(
+        qt(
+          1 - alpha / (2 * M),
+          df = N - 2
+          )
+      )
+  ]
+t_rejected_allnull_bonferonni_direct
+```
+
+### FWERの評価
+
+それでは、Bonferroni補正によってFEWRが本当に制御できているのか確認しよう。その点を検証するため、以上のプロセスを`r L`回繰り返すために、そのプロセスを関数化し、`r L`回のシミュレーションを行う。
+
+
+```{r}
+t_list_allnull_all <-
+  seq_len(L) %>%      
+  purrr::map(
+    ~ compute_t_statistics_null_effect(
+        N = N,
+        M = M,
+        alpha = alpha,
+        seed = .
+      ) 
+  )
+```
+
+その結果、`r L`回のシミュレーションにおいて、少なくとも一つの帰無仮説を誤って棄却したものの割合を求める。
+
+#### 補正を行わない場合のFWER制御失敗
+
+まずは、補正なしの場合は以下の通りである。
+
+```{r}
+t_rejected_allnull_all <-
+  t_list_allnull_all %>%
+  purrr::map(
+    function(t_list_allnull) {
+      length_rejected <-
+        t_list_allnull %>%
+        abs() %>%
+        .[
+          . > 
+            abs(
+              qt(
+                1 - alpha / 2,
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected > 0)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+fwer_allnull <-
+  sum(t_rejected_allnull_all) / 
+  length(t_rejected_allnull_all)
+
+fwer_allnull
+```
+
+このFWERは、有意水準`r alpha`よりもはるかに高い値になっている。
+
+#### Bonferroni補正によるFWER制御
+
+次に、Bonferonni補正をかけた場合のFWERを求める。
+
+```{r}
+t_rejected_allnull_bonferonni_all <-
+  t_list_allnull_all %>%
+  purrr::map(
+    function(t_list_allnull) {
+      length_rejected <-
+        t_list_allnull %>%
+        abs() %>%
+        .[
+          . > 
+            abs(
+              qt(
+                1 - alpha / (2 * M),
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected > 0)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+fwer_allnull_bonferonni <-
+  sum(t_rejected_allnull_bonferonni_all) / 
+  length(t_rejected_allnull_bonferonni_all)
+
+fwer_allnull_bonferonni
+```
+
+このFWERは、理論通り、有意水準`r alpha`以下になっている。
+
+## 偽である帰無仮説を含むデザイン
+
+しかし、この検定は保守的であり、仮に帰無仮説が偽であってもまったく棄却できないことがある。
+
+その点を検証するために、今度は`M - M_F`個の帰無仮説が偽であるようなデータを生成し、仮説検定を行い、その検定統計量を計算する。
+
+
+```{r}
+t_list_somealt_null <-
+  result_list_null_somealt %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "t value"
+      ]
+  ) %>%
+  purrr::reduce(c)
+
+t_list_somealt_alternative <-
+  result_list_alternative_somealt %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "t value"
+      ]
+  ) %>%
+  purrr::reduce(c)
+
+t_list_somealt <- c(
+  t_list_somealt_null,
+  t_list_somealt_alternative
+)
+null_list_somealt <- c(
+  rep(
+    "null", 
+    length = length(t_list_somealt_null)
+  ),
+  rep(
+    "alternative", 
+    length = length(t_list_somealt_alternative)
+  )
+)
+```
+
+```{r}
+p_list_somealt_null <-
+  result_list_null_somealt %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "Pr(>|t|)"
+      ]
+  ) %>%
+  purrr::reduce(c)
+
+p_list_somealt_alternative <-
+  result_list_alternative_somealt %>%
+  purrr::map(
+    ~ summary(.) %>%
+      coef() %>%
+      .[
+        "zTRUE",
+        "Pr(>|t|)"
+      ]
+  ) %>%
+  purrr::reduce(c)
+p_list_somealt <- c(
+  p_list_somealt_null,
+  p_list_somealt_alternative
+)
+```
+
+この検定統計量の値を小さいものから大きいものに並べて、その値と`r alpha`水準の臨界値をプロットすると、以下のようになる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(t_list_somealt),
+        y = t_list_somealt[t_list_somealt %>% abs() %>% order()] %>% abs(),
+        color = null_list_somealt[t_list_somealt %>% abs() %>% order()]
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = abs(
+      qt(
+        1 - alpha / 2,
+        df = N - 2
+      )
+    ),
+    color = "red"
+  ) +
+  scale_color_viridis_d() +
+  labs(
+    x = "検定統計量の順位",
+    y = "検定統計量の絶対値",
+    color = "帰無仮説であるか否か"
+  ) + 
+  theme_classic()
+```
+
+p値でみると、以下の通りとなる。
+
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(p_list_somealt),
+        y = p_list_somealt[p_list_somealt %>% order()],
+        color = null_list_somealt[p_list_somealt %>% order()]
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = alpha,
+    color = "red"
+  ) +
+  scale_color_viridis_d() +
+  labs(
+    x = "検定統計量の順位",
+    y = "p値",
+    color = "帰無仮説であるか否か"
+  ) +
+  theme_classic()
+```
+
+このp値のうち、`r alpha`の水準で帰無仮説を正しく棄却しているものは以下のとおりである。
+
+```{r}
+p_rejected_somealt <-
+  p_list_somealt_alternative %>%
+  abs() %>%
+  .[
+    . < alpha
+  ]
+p_rejected_somealt
+```
+
+一方で、本来棄却すべきでない真の帰無仮説のうち、誤って棄却されているものは以下の通りである。
+
+```{r}
+p_rejected_somealt_false <-
+  p_list_somealt_null %>%
+  abs() %>%
+  .[
+    . < alpha
+  ]
+p_rejected_somealt_false
+```
+
+
+一方、Bonferroni補正をかけた棄却域を比較してみると、以下の通りとなる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(t_list_somealt),
+        y = t_list_somealt[t_list_somealt %>% abs() %>% order()] %>% abs(),
+        color = null_list_somealt[t_list_somealt %>% abs() %>% order()]
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = abs(
+      qt(
+        1 - alpha / (2 * M),
+        df = N - 2
+      )
+    ),
+    color = "red"
+  ) +
+  scale_color_viridis_d() +
+  labs(
+    x = "検定統計量の順位",
+    y = "検定統計量の絶対値",
+    color = "帰無仮説であるか否か"
+  ) +
+  theme_classic()
+```
+
+この補正した検定において、`r alpha/M`の水準で正しく棄却しているものは以下のとおりである。
+
+```{r}
+t_rejected_somealt_bonferonni <-
+  t_list_somealt_alternative %>%
+  abs() %>%
+  .[
+    . > 
+      abs(
+        qt(
+          1 - alpha / (2 * M),
+          df = N - 2
+          )
+      )
+  ]
+t_rejected_somealt_bonferonni
+```
+
+p値でみると、以下の通りとなる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(p_list_somealt),
+        y = p_list_somealt[p_list_somealt %>% order()],
+        color = null_list_somealt[p_list_somealt %>% order()]
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = alpha / M,
+    color = "red"
+  ) +
+  scale_color_viridis_d() +
+  labs(
+    x = "検定統計量の順位",
+    y = "p値",
+    color = "帰無仮説であるか否か"
+  ) +
+  theme_classic()
+```
+
+この補正された検定において、`r alpha/M`の水準で帰無仮説を正しく棄却しているものは以下のとおりである。
+
+```{r}
+p_rejected_somealt_bonferonni <-
+  p_list_somealt_alternative %>%
+  abs() %>% sort() %>%
+  .[
+    . < alpha / M
+  ]
+p_rejected_somealt_bonferonni
+```
+
+一方で、本来棄却すべきでない真の帰無仮説のうち、誤って棄却されているものは以下の通りである。
+
+```{r}
+p_rejected_somealt_false_bonferonni <-
+  p_list_somealt_null %>%
+  abs() %>%
+  .[
+    . < alpha / M
+  ]
+p_rejected_somealt_false_bonferonni
+```
+
+
+### FWERの計算
+
+上の例では補正を行うことで誤った棄却を防ぐことができたが、FEWR自体はどのようになっているだろうか。その点を検証するため、以上のプロセスを`r L`回繰り返すために、そのプロセスを関数化し、`r L`回のシミュレーションを行う。
+
+
+```{r}
+t_list_somealt_null <-
+  seq_len(L) %>%      
+  purrr::map(
+    ~ compute_t_statistics_null_effect(
+        N = N,
+        M = M - M_F,
+        alpha = alpha,
+        seed = .
+      ) 
+  )
+t_list_somealt_alternative <- 
+  seq_len(L) %>%      
+  purrr::map(
+    ~ compute_t_statistics_alternative_effect(
+        N = N,
+        M = M_F,
+        alpha = alpha,
+        seed = .
+      ) 
+  )
+```
+
+その結果、`r L`回のシミュレーションにおいて、少なくとも一つの帰無仮説を誤って棄却したものの割合を求める。まずは、補正なしの場合は以下の通りである。
+
+```{r}
+t_rejected_somealt_null <-
+  t_list_somealt_null %>%
+  purrr::map(
+    function(t_list_somealt) {
+      length_rejected <-
+        t_list_somealt %>%
+        abs() %>%
+        .[
+          . > 
+            abs(
+              qt(
+                1 - alpha / 2,
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected > 0)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+fwer_somealt <-
+  sum(t_rejected_somealt_null) / 
+  length(t_rejected_somealt_null)
+
+fwer_somealt
+```
+
+このFWERは、有意水準`r alpha`よりもはるかに高い値になっている。したがって、やはり補正がない場合はFEWRを適切に制御することができていない。
+
+次に、Bonferonni補正をかけた場合のFWERを求める。
+
+```{r}
+t_rejected_somealt_bonferonni_null <-
+  t_list_somealt_null %>%
+  purrr::map(
+    function(t_list_somealt) {
+      length_rejected <-
+        t_list_somealt %>%
+        abs() %>%
+        .[
+          . > 
+            abs(
+              qt(
+                1 - alpha / (2 * M),
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected > 0)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+fwer_somealt_bonferonni <-
+  sum(t_rejected_somealt_bonferonni_null) / 
+  length(t_rejected_somealt_bonferonni_null)
+
+fwer_somealt_bonferonni
+```
+
+### 検出力の計算
+
+次に、このデザインにおいて、検出力を比較してみよう。
+
+その結果、`r L`回のシミュレーションにおいて、対立仮説である帰無仮説を棄却できた割合を求める。まずは、補正なしの場合は以下の通りである。
+
+```{r}
+t_rejected_somealt_alternative <-
+  t_list_somealt_alternative %>%
+  purrr::map(
+    function(t_list_somealt) {
+      length_rejected <-
+        t_list_somealt %>%
+        abs() %>%
+        .[
+          . > 
+            abs(
+              qt(
+                1 - alpha / 2,
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+power_somealt <-
+  sum(t_rejected_somealt_alternative) / 
+  (
+    length(t_list_somealt_alternative) * 
+      length(t_list_somealt_alternative[[1]])
+  )
+
+power_somealt
+```
+
+次に、Bonferonni補正をかけた場合の検出力を求める。
+
+```{r}
+t_rejected_somealt_bonferonni_alternative <-
+  t_list_somealt_alternative %>%
+  purrr::map(
+    function(t_list_somealt) {
+      length_rejected <-
+        t_list_somealt %>%
+        abs() %>%
+        .[
+          . > 
+            abs(
+              qt(
+                1 - alpha / (2 * M),
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+power_somealt_bonferonni <-
+  sum(t_rejected_somealt_bonferonni_alternative) / 
+  (
+    length(t_list_somealt_alternative) * 
+      length(t_list_somealt_alternative[[1]])
+  )
+
+power_somealt_bonferonni
+```
+
+この検出力は当然補正をかけない場合の`r power_somealt`よりも低くなるが、補正をかけていないとFWERが`r fwer_somealt`となり、全く持って制御できていなかったことを思い出そう。
+
+## Bonferroni-Holm補正
+
+この時、Bonferroni-Holm検定を用いれば、理論上は、より多くの帰無仮説を棄却できるはずである。この点を確認しておこう。
+
+### p値の有意水準の補正
+
+p値と補正された有意水準を比較すると、以下の通りとなる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(p_list_somealt),
+        y = p_list_somealt[p_list_somealt %>% order()],
+        color = null_list_somealt[p_list_somealt %>% order()]
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = alpha,
+    color = "red"
+  ) +
+  geom_line(
+    mapping = 
+      aes(
+        x = seq_along(p_list_somealt),
+        y = alpha / (M - seq_along(p_list_somealt) + 1)
+      ),
+    color = "blue"
+  ) +
+  scale_color_viridis_d() +
+  labs(
+    x = "検定統計量の順位",
+    y = "p値",
+    color = "帰無仮説であるか否か"
+  ) +
+  theme_classic()
+```
+
+この補正された検定において、`r alpha/M`の水準で正しく棄却しているものは以下のとおりである。
+
+```{r}
+p_rejected_somealt_bonferonni_holm <-
+  p_list_somealt_alternative %>%
+  abs() %>%
+  sort() 
+
+index <-
+  (
+    p_rejected_somealt_bonferonni_holm <=
+      alpha / (M - seq_along(p_rejected_somealt_bonferonni_holm) + 1)
+  )
+
+index <-
+  index %>%
+  cummin() %>%
+  as.logical()
+
+p_rejected_somealt_bonferonni_holm <-
+  p_rejected_somealt_bonferonni_holm[
+    index
+  ]
+
+p_rejected_somealt_bonferonni_holm
+```
+
+一方で、本来棄却すべきでない真の帰無仮説のうち、誤って棄却されているものは以下の通りである。
+
+```{r}
+p_rejected_somealt_false_bonferonni_holm <-
+  p_list_somealt_null %>%
+  abs() %>%
+  sort() 
+
+index <-
+  (
+    p_rejected_somealt_false_bonferonni_holm <=
+      alpha / (M - seq_along(p_rejected_somealt_false_bonferonni_holm) + 1)
+  )
+
+index <-
+  index %>%
+  cummin() %>%
+  as.logical()
+
+p_rejected_somealt_false_bonferonni_holm <-
+  p_rejected_somealt_false_bonferonni_holm[
+    index
+  ]
+
+p_rejected_somealt_false_bonferonni_holm
+```
+
+これらの棄却判定は、Bonferroni補正の場合と異なる。すなわち、このデータにおいては、Bonferroni-Holm補正によって誤った棄却を行わないまま、Bonferroni補正では棄却できなかった帰無仮説を正しく棄却できるようになったことがわかる。
+```{r}
+p_rejected_somealt_bonferonni
+p_rejected_somealt_bonferonni_holm
+```
+
+同じことはやはりRの`p.adjust`関数を使っても実現できる。この関数にp値のリストを与え、`method`オプションに`holm`を指定すると修正されたp値が返ってくる。この値が有意水準`r alpha`を下回っているか見るかを確認すればよい。
+
+```{r}
+p_adjusted_somealt_bonferonni_holm <-
+  p.adjust(
+    p = p_list_somealt,
+    method = "holm"
+  )
+p_adjusted_somealt_bonferonni_holm
+
+check <-
+  p_list_somealt %>%
+  sort() 
+
+check <-
+  check * (M - seq_along(check) + 1)
+
+check <-
+  ifelse(
+    check > 1,
+    1,
+    check
+  )
+
+check <-
+  cummax(
+    check
+  )
+
+p_adjusted_somealt_bonferonni_holm %>% sort() - check
+```
+
+### t値での比較
+
+一般には`p`値について手順が示されているが、この場合は全て`t`値での検定を行なっているため、`t`値でも同じ結果を得ることができる。
+
+```{r}
+ggplot(
+  mapping = 
+    aes(
+        x = seq_along(t_list_somealt),
+        y = t_list_somealt[t_list_somealt %>% abs() %>% order()] %>% abs(),
+        color = null_list_somealt[t_list_somealt %>% abs() %>% order()]
+    )
+  ) + 
+  geom_point() +
+  geom_hline(
+    yintercept = abs(
+      qt(
+        1 - alpha / (2 * M),
+        df = N - 2
+      )
+    ),
+    color = "red"
+  ) +
+  geom_line(
+    mapping = 
+      aes(
+        x = seq_along(t_list_somealt),
+        y = abs(
+          qt(
+            1 - alpha / (2 * seq_along(t_list_somealt)),
+            df = N - 2
+          )
+        )
+      ),
+    color = "blue"
+  ) +
+  scale_color_viridis_d() +
+  labs(
+    x = "検定統計量の順位",
+    y = "検定統計量の絶対値",
+    color = "帰無仮説であるか否か"
+  ) +
+  theme_classic()
+```
+
+### FWERと検出力の比較
+
+上の例ではBonferroni補正とBonferroni=Holm補正は同じ結果を与えた。それでは、FWERと検出力は同じだろうか。
+
+Bonferroni検定についてみたように、Bonferroni=Holm検定についても、そのFWERと検出力を確認しておこう。
+
+```{r}
+t_rejected_somealt_bonferonni_holm_null <-
+  t_list_somealt_null %>%
+  purrr::map(
+    function(t_list_somealt) {
+      length_rejected <-
+        t_list_somealt %>%
+        abs() %>%
+        sort(decreasing = TRUE) %>% 
+        .[
+          . >
+            abs(
+              qt(
+                1 - alpha / (2 * (M - seq_along(t_list_somealt) + 1)),
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected > 0)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+FWER_somealt_bonferonni_holm <-
+  sum(t_rejected_somealt_bonferonni_holm_null) / 
+  length(t_rejected_somealt_bonferonni_holm_null)
+
+FWER_somealt_bonferonni_holm
+```
+
+```{r}
+t_rejected_somealt_bonferonni_holm_alternative <-
+  t_list_somealt_alternative %>%
+  purrr::map(
+    function(t_list_somealt) {
+      length_rejected <-
+        p_rejected_somealt_bonferonni_holm[
+          index
+        ] %>% length()
+
+      length_rejected <-
+        t_list_somealt %>%
+        abs() %>%
+        sort(decreasing = TRUE) %>% 
+        .[
+          . >
+            abs(
+              qt(
+                1 - alpha / (2 * (M - seq_along(t_list_somealt) + 1)),
+                df = N - 2
+                )
+            )
+        ] %>%
+        length()
+      return(length_rejected)
+    }
+  ) %>%
+  purrr::reduce(c)
+
+power_somealt_bonferonni_holm <-
+  sum(t_rejected_somealt_bonferonni_holm_alternative) / 
+  (
+    length(t_list_somealt_alternative) * 
+      length(t_list_somealt_alternative[[1]])
+  )
+
+power_somealt_bonferonni_holm
+```
+
+以上のように、Bonferroni-Holm修正においてもFWERを`r alpha`以下に抑えることができた。さらに、Bonferroni補正の検出力`r power_somealt_bonferonni`に比べ、少しではあるがより良い検出力が得られている。
+
+
+

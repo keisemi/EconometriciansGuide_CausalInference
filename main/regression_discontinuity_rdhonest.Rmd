@@ -1,0 +1,494 @@
+---
+title: "第7章　回帰非連続デザインの発展的トピック"
+subtitle: "[R7.2] 離散スコアRD推定"
+author: "作成者：澤田真行"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-04-19'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+library(RDHonest)
+library(CausalInferenceTextbook)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは、第7章の7.2節「離散スコアへの対応」で解説した、`RDHonest`パッケージを用いた離散スコアによるシャープ回帰非連続デザインの推定手法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_rdrobust.R`および`R/functions_rdhonest.R`に定義されている。
+
+# 三種類のデータ生成
+
+`rdrobust`と同じように、RDの数値計算評価にたびたび用いられる実証研究の関数形状を近似したものからシミュレーションデータを生成する。ここでは、Ludwig and Miller (2006)の関数形状を処置側と統制側で逆にしたものを用いる。
+
+## 連続スコアデータの生成
+
+```{r}
+set.seed(1)
+N <- 1000
+dgp_cont <- 
+  generate_dgp_LM_discrete(
+    N = N,
+    rounding = function(s) {s}
+  )
+dgp_all <- 
+  list(
+    dgp_cont = dgp_cont
+  )
+```
+
+続いて、0.01刻みの離散点にスコアが実現している場合を考える。すなわち、スコアは離散点のみで実現し、離散点での条件付き期待値に正規分布ノイズを加えたものが従属変数として観測される。同様に、0.05刻み、0.1刻み、0.02刻みのデータを生成する。
+
+## 離散データの生成
+
+### 設定の準備
+
+```{r}
+list_specitications <- 
+  list(
+    "Continuous score variable",
+    "Discrete score variable at 0.01 grids",
+    "Discrete score variable at 0.02 grids",
+    "Discrete score variable at 0.05 grids",
+    "Discrete score variable at 0.1 grids"
+  )
+
+list_rounding_fine <- 
+  list(
+    dgp_001 = function(s) {
+          round(
+            s,
+            2
+          )
+        },
+    dgp_002 = function(s) {
+          round(
+            s / 2,
+            2
+          ) * 2
+    }
+  )
+list_rounding_rough <- 
+  list(
+    dgp_005 = function(s) {
+          round(
+            s * 2,
+            1
+          ) / 2
+        },
+    dgp_01 = function(s) {
+          round(
+            s,
+            1
+          )
+        }
+  )
+```
+
+### 生成
+
+```{r}
+dgp_discrete_fine <- 
+  purrr::map(
+    .x = list_rounding_fine,
+    .f = function (rounding) {
+      call_generate_dgp_LM_discrete(rounding)
+    }
+  )
+
+dgp_discrete_rough <- 
+  purrr::map(
+    .x = list_rounding_rough,
+    .f = function (rounding) {
+      call_generate_dgp_LM_discrete(rounding)
+    }
+  )
+dgp_fine <- 
+  append(
+    dgp_all,
+    dgp_discrete_fine
+  )
+dgp_all <- 
+  append(
+    dgp_fine,
+    dgp_discrete_rough
+  )
+```
+
+## プロット
+
+生成したデータをそれぞれプロットしてみる。プロットを見ればわかるように、統制側で傾きが急な関数形状であることがわかる。なお、本来の関数形状で急な傾きとなっているのは処置側であるが、離散RDにおいては統制側の推定がより大きな問題であり、このように左右逆の関数形状とした。
+
+```{r}
+list_plots <- 
+  purrr::map(
+    .x = dgp_all,
+    .f = call_plot_data
+  )
+
+counter <- 0
+for (
+  plot in list_plots
+) {
+  counter <- counter + 1
+  plot_to_display <- 
+    plot + 
+    ggtitle(
+      list_specitications[counter]
+    )
+  print(plot_to_display)
+}
+```
+
+このように、明らかに離散で観測されるような状況に近づくと、統制側端点の推定が困難になることがよくわかる。
+
+# 分析: OLS、`rdrobust`、`RDHonest`の比較
+
+以下では、
+- 伝統的に行われているグローバルな高次項を入れたOLS
+- `rdrobust`推定
+- `RDHonest`推定
+を順番に行い、その結果を比較する。
+
+## グローバルOLS推定
+
+```{r}
+table <- data.frame()
+
+# lm.clusterを関数呼び出し内で呼ぶ時に、wgt__不在エラーが出る様子（バグ）
+# https://github.com/alexanderrobitzsch/miceadds/issues/18
+
+wgt__ <- NULL
+```
+
+```{r}
+list_results_OLS <- 
+  purrr::map(
+    .x = dgp_all,
+    .f = return_OLS
+  )
+
+list_specitications <- 
+  list(
+    "連続スコア",
+    "離散(0.01刻み)",
+    "離散(0.1刻み)",
+    "離散(0.02刻み)",
+    "離散(0.05刻み)"
+  )
+
+counter <- 0
+
+for (
+  result in list_results_OLS
+) {
+  counter <- counter + 1
+  table <- 
+    append_OLS_table(
+      table = table,
+      case = paste0(
+              "四次OLS 不均一分散頑健分散: ",
+              list_specitications[counter]
+            ),
+      result = result
+    )
+}
+```
+
+```{r}
+list_results_OLS_cluster <- 
+  purrr::map(
+    .x = dgp_all,
+    .f = return_OLS_cluster
+  )
+
+counter <- 0
+for (
+  result_cluster in list_results_OLS_cluster
+) {
+  counter <- counter + 1
+  table <- 
+    append_OLS_cluster_table(
+      table = table,
+      case = paste0(
+              "四次OLS クラスター頑健分散: ",
+              list_specitications[counter]
+            ),
+      result = result_cluster
+    )
+}
+```
+
+```{r}
+table %>%
+  kbl() %>%
+  kable_styling()
+```
+
+なお、真の効果量は`3.44`である。したがって、仮に連続値スコアが観測されていても真値から大きく乖離した信頼区間が出てくることがわかる。さらに、スコアの離散化が進むにつれて、点推定値がさらに乖離している。ここで、クラスター頑健分散推定を見ると、一見適切に機能しているように見えるが、これは決して常に保証されるわけではなく、分散は大きくも小さくもなりうる。いずれにせよ、真値に比べて、一貫して大きく乖離した信頼区間が得られていることがわかる。
+
+## クラスター頑健分散推定の方が小さい例
+
+実際、誤差項分散構造によっては、クラスター頑健分散推定のほうが小さい分散推定を得るような例が存在する。例えば、`generate_dgp_LM_discrete_alternate`では、デフォルトの誤差項分散`0.1295`に
+\[
+ 0.01 + 30 \cdot |s|
+\]
+を掛けたもの、としている。したがって、クラスター頑健分散をとることによってより”頑健”な推定が得られる保証はないことがわかるだろう。
+
+```{r}
+set.seed(1)
+dgp_01_alt <- 
+  generate_dgp_LM_discrete_alternate(
+    N = N,
+    rounding = function(s) {round(s,1)}
+  )
+
+table_alt <- data.frame()
+result <- 
+  return_OLS(
+    data = dgp_01_alt
+  )
+
+table_alt <-
+  append_OLS_table(
+    table = table_alt,
+    case = "四次OLS 不均一分散頑健分散: 離散(0.1刻み)",
+    result = result
+  )
+
+result_cluster <- return_OLS_cluster(data = dgp_01_alt)
+table_alt <- 
+  append_OLS_cluster_table(
+    table = table_alt,
+    case = "四次OLS クラスター頑健分散: 離散(0.1刻み)",
+    result = result_cluster
+  )
+
+table_alt
+```
+
+## `rdrobust`推定
+
+では、スコアの離散性を無視して`rdrobust`パッケージで推定するとどうなるだろうか。
+
+```{r}
+table <- data.frame()
+table_compare <- data.frame()
+
+list_results_rdrobust <- 
+  purrr::map(
+    .x = dgp_fine,
+    .f = call_rdrobust
+  )
+
+counter <- 0
+for (
+  result in list_results_rdrobust
+) {
+  counter <- counter + 1
+
+  table <- 
+    append_rdrobust_table(
+      table = table,
+      case = paste0(
+            "rdrobust: ",
+            list_specitications[counter]
+          ),
+      result = result
+    )
+  
+  table_compare <- 
+    append_rdrobust_table(
+      table = table_compare,
+      case = paste0(
+            "rdrobust: ",
+            list_specitications[counter]
+          ),
+      result = result
+    )
+}
+
+list_results_rdrobust_masspoints_off <- 
+  purrr::map(
+    .x = dgp_discrete_fine,
+    .f = call_rdrobust_mass_off
+  )
+
+counter <- 0
+for (
+  result in list_results_rdrobust_masspoints_off
+  ) {
+  counter <- counter + 1
+
+  table <- 
+    append_rdrobust_table(
+      table = table,
+      case = paste0(
+            "rdrobust: ",
+            list_specitications[counter+1],
+            "(離散値補正なし)"
+          ),
+      result = result
+    )
+}
+
+table
+```
+
+思いのほか適切な推定結果が得られていることがわかる。プロットでも0.02刻み程度であれば閾値に十分近いと言えそうな統制群観測を取ることができそうだが、0.05以上の粗さとなると、かなり離れてしまっていることを確認した。
+
+ここで、"Mass points detected in the running variable."という警告が出ていることに注意する。`rdrobust`パッケージでは、初期値で`masspoints`というオプションが`adjust`と指定されている。このオプションが設定されていると、同じ点での重複観測を自動で検出し、分散推定（閾値近傍の三点を選び分散推定のバイアス補正を行う部分）やバンド選択の補正をおこなってくれる。
+
+場合によっては、この補正によって、そのままでは不可能であった推定が行える場合もある。しかしながら、この補正を持ってもしても、一定以上離散化が進むと推定行列が非正則となってしまい、そもそも推定から行えなくなる。
+
+```{r}
+try(
+  result <- 
+    rdrobust::rdrobust(
+      y = dgp_all$dgp_005$y,
+      x = dgp_all$dgp_005$s
+    ), 
+  silent = FALSE
+)
+```
+
+## `RDHonest`に基づく推定
+
+`rdrobust`の`masspoint`オプションによる補正は有効であるものの、あくまでも連続スコアに偶然の重複観測が生じている場合の補正と考えるほうがよいだろう。
+
+`RDHonest`推定では、二階導関数の最悪値を指定してやる必要がある一方で、スコア変数が本質的に離散観測であることを加味した信頼区間を得ることができる。
+
+例えば、以下は推定の一例である。ここで、`kern = "uniform"`はカーネルを一様カーネルとしていること、`opt.criterion = "FLCI"`は推定量の最適基準が信頼区間幅の最小化であること、`sclass = "H"`はヘルダー連続関数のクラスを取り得る関数のクラスとしていること、`M = 100`は条件付き期待値関数の二階導関数が取り得る最悪値である。なお、真の二階導関数値は`-54.8`であり、`100`という値はその最悪値として十分に大きい値である。
+
+さらに、Mを減らすにつれてとり得る関数の形状がより穏当になることから、信頼区間がより小さくなる。しかしながら、`M < 60`の結果は真の関数形状と矛盾していることに注意したい。
+
+```{r}
+list_M_value <- 
+  c(
+    100, 
+    60, 
+    30, 
+    15, 
+    5
+)
+
+list_results_rdhonest <- 
+  purrr::map(
+    .x = list_M_value,
+    .f = call_rdhonest
+  )
+
+table <- data.frame()
+counter <- 0
+for (
+  result in list_results_rdhonest
+) {
+  counter <- counter + 1
+
+  table <- 
+    append_rdhonest_table(
+      table = table,
+      case = paste0(
+            "RDHonest: (0.05刻み) 一様カーネル CI最小化 M=",
+            list_M_value[counter]
+          ),
+      result = result
+    )
+}
+table
+```
+
+実際、`M`の値を極端に小さくしすぎると、信頼区間が小さくなりすぎ、真の値である`3.44`を含まなくなることがわかるだろう。
+
+しかしながら、通常`M`を選択するのは困難である。パッケージでは、グローバル多項式回帰に基づいて`M`を選択するArmstrong and Koles\'ar (2020)の方法が実装されており、これは`M`を指定しない場合の出力である。
+
+```{r}
+result <- 
+  RDHonest::RDHonest(
+    y ~ s,
+    data = dgp_all$dgp_005,
+    kern = "uniform",
+    opt.criterion = "FLCI",
+    sclass = "H"
+  )
+table <- 
+  append_rdhonest_table(
+    table = table,
+    case = "RDHonest: (0.05刻み) 一様カーネル CI最小化 M=rule-of-thumb",
+    result = result
+  )
+
+table
+```
+
+なお、一様カーネルでなく三角カーネルを指定することも当然できる。結果は大きく変わらない。
+
+```{r}
+result <- 
+  RDHonest::RDHonest(
+    y ~ s,
+    data = dgp_all$dgp_005,
+    kern = "triangular",
+    opt.criterion = "FLCI",
+    sclass = "H"
+  )
+
+table <- 
+  append_rdhonest_table(
+    table = table,
+    case = "RDHonest: (0.05刻み) 三角カーネル CI最小化 M=rule-of-thumb",
+    result = result
+  )
+
+table
+```
+
+ここまで得られた推定を、`rdrobust`で得られる推定と比較してみよう。少なくともこのシミュレーションデータにおいては、ほぼ同一であることがわかる。ただし、粗い離散化が行われた場合には`rdrobust`からは推定値を得ることもできないが、`RDHonest`では比較的適切と思われる推定値を返すことに注意しよう。
+
+```{r}
+list_results_rdhonest_data <- 
+  purrr::map(
+    .x = dgp_all,
+    .f = call_rdhonest_data
+  )
+
+counter <- 0
+for (
+  result in list_results_rdhonest_data
+) {
+  counter <- counter + 1
+
+  table_compare <- 
+    append_rdhonest_table(
+      table = table_compare,
+      case = paste0(
+            "RDHonest: ",
+            list_specitications[counter],
+            " (一様カーネル CI最小化 M=rule-of-thumb)"
+          ),
+      result = result
+    )
+}
+
+table_compare
+```
+

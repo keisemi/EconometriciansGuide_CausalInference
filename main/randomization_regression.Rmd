@@ -1,0 +1,218 @@
+---
+title: "第2章　無作為化実験"
+subtitle: "[R2.3] 共変量の「統制」と回帰分析"
+author: "作成者：川口康平"
+output: 
+  html_document:
+    css: style_do.css
+    #以下設定追加
+    number_sections: yes
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    theme: "spacelab" #"default", "bootstrap", "cerulean", "cosmo", "darkly", "flatly",
+                 # "journal", "lumen", "paper", "readable", "sandstone", "simplex",
+                 # "spacelab", "united", "yeti"
+    highlight: "pygments" #"default", "tango", "pygments", "kate", "monochrome",
+                 # "espresso", "zenburn", "haddock", "textmate"
+    df_print: paged
+    code_folding: show
+#date: '2022-03-30'
+date: '最終更新: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, echo = TRUE, fig.align = "center")
+library(foreach)
+library(magrittr)
+library(ggplot2)
+library(kableExtra)
+library(modelsummary)
+library(CausalInferenceTextbook)
+color_main <- scales::viridis_pal(option = "C")(1)
+```
+
+ここでは、第2章の2.5節「共変量の『統制』と回帰分析」の手法を実装する。
+`CausalInferenceTextbook`から呼び出している関数は`R/functions_randomized.R`に定義されている。まず標本の潜在結果を生成し、次に、処置ベクトルと顕在結果を生成する。その実現した処置ベクトルと顕在結果をもとに、回帰分析によって平均処置効果の推定量を得る。最後にその推定量の標準誤差を`sandwich`パッケージと手動計算の両方の方法で求める。
+
+# シミュレーションデータの生成
+
+## 定数とパラメータの設定
+
+はじめに、シードを固定して、個体数`N`、処置群のサイズ`N_1`を設定する。
+
+```{r}
+set.seed(1)
+N <- 10000
+N_1 <- 5000
+```
+
+つぎに、母集団における平均処置効果`tau_population`を設定する。
+
+```{r}
+tau_population <- 0.2
+```
+
+## データの生成
+
+以上の定数とパラメーターを元に標本の潜在結果を生成する。この操作が一回の無作為抽出にあたる。ただし、今回は個体ごとの共変量`x`を標準正規分布から生成する。そして、処置がないときの潜在結果が$Y_0^\ast(0) = \exp(x) - exp(1/2)$のように`x`に非線形に依存すると仮定する。このとき$\mathbb{E}\{Y_0^\ast(0)\} = 0$であり、母集団における平均処置効果は`tau_population`のままであることに注意せよ。無作為抽出された標本における平均処置効果`tau`も計算する。
+
+```{r}
+outcome_potential <-
+  tibble::tibble(
+    x = rnorm(N),
+    y_0 = 
+      rnorm(
+        N, 
+        mean = 
+          (
+            exp(x) - 
+            exp(1/2)
+          ), 
+        sd = 1
+      ),
+    y_1 = 
+      rnorm(
+        N, 
+        mean = tau_population, 
+        sd = 1
+      )
+  )
+tau <-
+  outcome_potential %>%
+  dplyr::summarise(
+    tau = mean(
+      y_1 - 
+      y_0
+    )
+  ) %>%
+  dplyr::pull(tau)
+
+outcome_potential %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+
+outcome_potential %>%
+  modelsummary::datasummary_skim()
+
+tau
+```
+
+次に、観察されるデータを生成する。そのために、まず処置ベクトル`z`を生成する。この操作が一回の無作為化実験にあたる。さらに、実現した処置ベクトルと潜在結果から、顕在結果を計算する。
+
+
+```{r}
+data_realized <-
+  generate_data_randomized(
+    outcome_potential = outcome_potential,
+    N_1 = N_1,
+    seed = 1
+  )
+data_realized %>%
+  head() %>%
+  kbl() %>%
+  kable_styling()
+data_realized %>%
+  modelsummary::datasummary_skim()
+```
+
+
+# 分析
+
+## 回帰分析
+
+以上のデータをもとに、回帰分析を行う。一つ目の定式化では共変量の情報を無視する。次に、`x`に関して線形な、正しく定式化されていないモデルを考える。
+
+なお、正しく定式化されたモデルは：
+$$
+Y_i = Z_i\tau + (1 - Z_i)[\exp(X_i)-\exp(1/2)]+\epsilon_i
+$$
+であるが、$Z_i$の係数が$\tau$になるようにするためには、変数$\dot{X}_i = \exp(X_i)-\exp(1/2)$を定義して、以下のような回帰式を考える必要がある。
+$$
+Y_i = - \exp(1/2) + Z_i\tau + \dot{X}_i - Z_i \dot{X}_i + \epsilon_i.
+$$
+
+
+```{r}
+result_ols <-
+  c(
+    "y ~ z",
+    "y ~ z + x",
+    "y ~ z + exp(x)",
+    "y ~ z + x_dot + z:x_dot"
+  ) %>%
+  purrr::map(as.formula) %>%
+  purrr::map(
+    .,
+    ~ lm(
+      formula = .,
+      data = 
+        data_realized %>%
+        dplyr::mutate(
+          x_dot = exp(x) - exp(1/2)
+        )
+      )
+  )
+```
+
+
+## 推定結果
+
+共変量の定式化の正しさによらず、標本の平均処置効果`tau` $=$ `r tau`は95\%信頼区間に含まれていることがわかる。
+
+```{r, warning = FALSE}
+result_ols %>%
+  modelsummary(
+    vcov = "HC2"
+  ) 
+```
+
+## 標準誤差の手動計算
+
+```{r}
+se_hetero <-
+  result_ols %>%
+  purrr::map(
+    .,
+    ~ data.frame(
+      data_realized,
+      residual = .$residuals,
+      df = .$df.residual
+      ) %>%
+      dplyr::mutate(
+        z_bar = mean(z)
+      ) %>%
+      dplyr::summarise(
+        v = 
+          sum(
+            (
+              z - z_bar
+            )^2 * 
+            residual^2 / 
+            (
+              z_bar * 
+              (1 - z_bar)
+            )^2
+            ) 
+        / 
+        (
+          length(z) * 
+          mean(df)
+        )
+      ) %>%
+      dplyr::ungroup() %>%
+      sqrt()
+  ) %>%
+  dplyr::bind_rows()
+```
+
+
+```{r}
+data.frame(
+  model = c("共変量なし", "線形共変量", "指数共変量", "正しい定式化"),
+  "不均一分散頑健分散推定量" = se_hetero$v
+  ) %>%
+  kbl() %>%
+  kable_styling()
+```
