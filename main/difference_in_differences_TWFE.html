@@ -3176,8 +3176,8 @@ G_{6i} + (-1.75) \cdot G_{7i} + (-1) \cdot G_{8i})
 <span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a>    g6_i,</span>
 <span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a>    g5_i</span>
 <span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a>  )</span></code></pre></div>
-<pre><code>## `summarise()` has grouped output by &#39;g5_i&#39;, &#39;g6_i&#39;, &#39;g7_i&#39;. You can override
-## using the `.groups` argument.</code></pre>
+<pre><code>## `summarise()` has grouped output by &#39;g5_i&#39;, &#39;g6_i&#39;, &#39;g7_i&#39;. You can
+## override using the `.groups` argument.</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":["g5_i"],"name":[1],"type":["lgl"],"align":["right"]},{"label":["g6_i"],"name":[2],"type":["lgl"],"align":["right"]},{"label":["g7_i"],"name":[3],"type":["lgl"],"align":["right"]},{"label":["g8_i"],"name":[4],"type":["lgl"],"align":["right"]},{"label":["fraction"],"name":[5],"type":["dbl"],"align":["right"]}],"data":[{"1":"FALSE","2":"FALSE","3":"FALSE","4":"FALSE","5":"0.325"},{"1":"TRUE","2":"FALSE","3":"FALSE","4":"FALSE","5":"0.457"},{"1":"FALSE","2":"TRUE","3":"FALSE","4":"FALSE","5":"0.128"},{"1":"FALSE","2":"FALSE","3":"TRUE","4":"FALSE","5":"0.042"},{"1":"FALSE","2":"FALSE","3":"FALSE","4":"TRUE","5":"0.048"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
@@ -3424,9 +3424,6 @@ Y_{it} = \mu_i + \theta_t + \tau Z_{it} + \epsilon_{it}
 <span id="cb24-15"><a href="#cb24-15" tabindex="-1"></a>  <span class="at">cluster =</span> <span class="st">&quot;id&quot;</span>, </span>
 <span id="cb24-16"><a href="#cb24-16" tabindex="-1"></a>  <span class="at">test =</span> <span class="st">&quot;naive-t&quot;</span></span>
 <span id="cb24-17"><a href="#cb24-17" tabindex="-1"></a>)</span></code></pre></div>
-<pre><code>## Registered S3 method overwritten by &#39;clubSandwich&#39;:
-##   method    from    
-##   bread.mlm sandwich</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Coef"],"name":[1],"type":["chr"],"align":["left"]},{"label":["beta"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["tstat"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df_t"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["p_t"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"z_it","2":"0.04699217","3":"0.01018172","4":"4.615346","5":"999","6":"4.43509e-06","_rn_":"z_it"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
@@ -3438,24 +3435,24 @@ Y_{it} = \mu_i + \theta_t + \tau Z_{it} + \epsilon_{it}
 <h2><span class="header-section-number">2.2</span>
 複数時点割当における推定</h2>
 <p>次に、複数時点割り当てデザインにおける推定を考える。先ほど生成した<code>df_design_multiperiod</code>のうち、観測できる変数は以下の通りである。</p>
-<div class="sourceCode" id="cb26"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a>df_design_multiperiod_observed <span class="ot">&lt;-</span> </span>
-<span id="cb26-2"><a href="#cb26-2" tabindex="-1"></a>  df_design_multiperiod <span class="sc">%&gt;%</span></span>
-<span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">select</span>(</span>
-<span id="cb26-4"><a href="#cb26-4" tabindex="-1"></a>    <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>,</span>
-<span id="cb26-5"><a href="#cb26-5" tabindex="-1"></a>      <span class="st">&quot;time&quot;</span>,</span>
-<span id="cb26-6"><a href="#cb26-6" tabindex="-1"></a>      <span class="st">&quot;group_i&quot;</span>,</span>
-<span id="cb26-7"><a href="#cb26-7" tabindex="-1"></a>      <span class="st">&quot;g5_i&quot;</span>,</span>
-<span id="cb26-8"><a href="#cb26-8" tabindex="-1"></a>      <span class="st">&quot;g6_i&quot;</span>,</span>
-<span id="cb26-9"><a href="#cb26-9" tabindex="-1"></a>      <span class="st">&quot;g7_i&quot;</span>,</span>
-<span id="cb26-10"><a href="#cb26-10" tabindex="-1"></a>      <span class="st">&quot;g8_i&quot;</span>,</span>
-<span id="cb26-11"><a href="#cb26-11" tabindex="-1"></a>      <span class="st">&quot;z5_it&quot;</span>,</span>
-<span id="cb26-12"><a href="#cb26-12" tabindex="-1"></a>      <span class="st">&quot;z6_it&quot;</span>,</span>
-<span id="cb26-13"><a href="#cb26-13" tabindex="-1"></a>      <span class="st">&quot;z7_it&quot;</span>,</span>
-<span id="cb26-14"><a href="#cb26-14" tabindex="-1"></a>      <span class="st">&quot;z8_it&quot;</span>,</span>
-<span id="cb26-15"><a href="#cb26-15" tabindex="-1"></a>      <span class="st">&quot;z_it&quot;</span>,</span>
-<span id="cb26-16"><a href="#cb26-16" tabindex="-1"></a>      <span class="st">&quot;y_it&quot;</span>)</span>
-<span id="cb26-17"><a href="#cb26-17" tabindex="-1"></a>  )</span>
-<span id="cb26-18"><a href="#cb26-18" tabindex="-1"></a><span class="fu">head</span>(df_design_multiperiod_observed)</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a>df_design_multiperiod_observed <span class="ot">&lt;-</span> </span>
+<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a>  df_design_multiperiod <span class="sc">%&gt;%</span></span>
+<span id="cb25-3"><a href="#cb25-3" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">select</span>(</span>
+<span id="cb25-4"><a href="#cb25-4" tabindex="-1"></a>    <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>,</span>
+<span id="cb25-5"><a href="#cb25-5" tabindex="-1"></a>      <span class="st">&quot;time&quot;</span>,</span>
+<span id="cb25-6"><a href="#cb25-6" tabindex="-1"></a>      <span class="st">&quot;group_i&quot;</span>,</span>
+<span id="cb25-7"><a href="#cb25-7" tabindex="-1"></a>      <span class="st">&quot;g5_i&quot;</span>,</span>
+<span id="cb25-8"><a href="#cb25-8" tabindex="-1"></a>      <span class="st">&quot;g6_i&quot;</span>,</span>
+<span id="cb25-9"><a href="#cb25-9" tabindex="-1"></a>      <span class="st">&quot;g7_i&quot;</span>,</span>
+<span id="cb25-10"><a href="#cb25-10" tabindex="-1"></a>      <span class="st">&quot;g8_i&quot;</span>,</span>
+<span id="cb25-11"><a href="#cb25-11" tabindex="-1"></a>      <span class="st">&quot;z5_it&quot;</span>,</span>
+<span id="cb25-12"><a href="#cb25-12" tabindex="-1"></a>      <span class="st">&quot;z6_it&quot;</span>,</span>
+<span id="cb25-13"><a href="#cb25-13" tabindex="-1"></a>      <span class="st">&quot;z7_it&quot;</span>,</span>
+<span id="cb25-14"><a href="#cb25-14" tabindex="-1"></a>      <span class="st">&quot;z8_it&quot;</span>,</span>
+<span id="cb25-15"><a href="#cb25-15" tabindex="-1"></a>      <span class="st">&quot;z_it&quot;</span>,</span>
+<span id="cb25-16"><a href="#cb25-16" tabindex="-1"></a>      <span class="st">&quot;y_it&quot;</span>)</span>
+<span id="cb25-17"><a href="#cb25-17" tabindex="-1"></a>  )</span>
+<span id="cb25-18"><a href="#cb25-18" tabindex="-1"></a><span class="fu">head</span>(df_design_multiperiod_observed)</span></code></pre></div>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":["id"],"name":[1],"type":["int"],"align":["right"]},{"label":["time"],"name":[2],"type":["int"],"align":["right"]},{"label":["group_i"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["g5_i"],"name":[4],"type":["lgl"],"align":["right"]},{"label":["g6_i"],"name":[5],"type":["lgl"],"align":["right"]},{"label":["g7_i"],"name":[6],"type":["lgl"],"align":["right"]},{"label":["g8_i"],"name":[7],"type":["lgl"],"align":["right"]},{"label":["z5_it"],"name":[8],"type":["dbl"],"align":["right"]},{"label":["z6_it"],"name":[9],"type":["dbl"],"align":["right"]},{"label":["z7_it"],"name":[10],"type":["dbl"],"align":["right"]},{"label":["z8_it"],"name":[11],"type":["dbl"],"align":["right"]},{"label":["z_it"],"name":[12],"type":["dbl"],"align":["right"]},{"label":["y_it"],"name":[13],"type":["dbl"],"align":["right"]}],"data":[{"1":"1","2":"1","3":"0","4":"FALSE","5":"FALSE","6":"FALSE","7":"FALSE","8":"0","9":"0","10":"0","11":"0","12":"0","13":"5.428205"},{"1":"2","2":"1","3":"0","4":"FALSE","5":"FALSE","6":"FALSE","7":"FALSE","8":"0","9":"0","10":"0","11":"0","12":"0","13":"5.539145"},{"1":"3","2":"1","3":"0","4":"FALSE","5":"FALSE","6":"FALSE","7":"FALSE","8":"0","9":"0","10":"0","11":"0","12":"0","13":"5.413548"},{"1":"4","2":"1","3":"5","4":"TRUE","5":"FALSE","6":"FALSE","7":"FALSE","8":"0","9":"0","10":"0","11":"0","12":"0","13":"5.236601"},{"1":"5","2":"1","3":"5","4":"TRUE","5":"FALSE","6":"FALSE","7":"FALSE","8":"0","9":"0","10":"0","11":"0","12":"0","13":"5.402495"},{"1":"6","2":"1","3":"5","4":"TRUE","5":"FALSE","6":"FALSE","7":"FALSE","8":"0","9":"0","10":"0","11":"0","12":"0","13":"5.651068"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
@@ -3468,88 +3465,88 @@ Y_{it} = \mu_i + \theta_t + \tau Z_{it} + \epsilon_{it}
 <p>ここでは処置群を、処置を受けたタイミングごとのグループ<code>group_i</code>にわけて、ずっと処置を受けない
 (never treated)
 統制群を使った差の差法推定を行う。この結果、標本におけるコーホートごとの処置群平均処置効果とおおむね近い推定値を得ることができる。</p>
-<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>trend_control <span class="ot">&lt;-</span> </span>
-<span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>  tibble<span class="sc">::</span><span class="fu">tibble</span>(</span>
-<span id="cb27-3"><a href="#cb27-3" tabindex="-1"></a>    <span class="at">group_i =</span> <span class="fu">c</span>(<span class="dv">5</span>,<span class="dv">6</span>,<span class="dv">7</span>,<span class="dv">8</span>),</span>
-<span id="cb27-4"><a href="#cb27-4" tabindex="-1"></a>    <span class="at">trend_control =</span> </span>
-<span id="cb27-5"><a href="#cb27-5" tabindex="-1"></a>      df_design_multiperiod_observed <span class="sc">%&gt;%</span></span>
-<span id="cb27-6"><a href="#cb27-6" tabindex="-1"></a>      dplyr<span class="sc">::</span><span class="fu">filter</span>(</span>
-<span id="cb27-7"><a href="#cb27-7" tabindex="-1"></a>        group_i <span class="sc">==</span> <span class="dv">0</span></span>
-<span id="cb27-8"><a href="#cb27-8" tabindex="-1"></a>      ) <span class="sc">%&gt;%</span></span>
-<span id="cb27-9"><a href="#cb27-9" tabindex="-1"></a>      dplyr<span class="sc">::</span><span class="fu">summarize</span>(</span>
-<span id="cb27-10"><a href="#cb27-10" tabindex="-1"></a>        <span class="at">trend_5 =</span> </span>
-<span id="cb27-11"><a href="#cb27-11" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">5</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">5</span>) <span class="sc">-</span> </span>
-<span id="cb27-12"><a href="#cb27-12" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">5</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">5</span>),</span>
-<span id="cb27-13"><a href="#cb27-13" tabindex="-1"></a>        <span class="at">trend_6 =</span> </span>
-<span id="cb27-14"><a href="#cb27-14" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">6</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">6</span>) <span class="sc">-</span> </span>
-<span id="cb27-15"><a href="#cb27-15" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">6</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">6</span>),</span>
-<span id="cb27-16"><a href="#cb27-16" tabindex="-1"></a>        <span class="at">trend_7 =</span> </span>
-<span id="cb27-17"><a href="#cb27-17" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">7</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">7</span>) <span class="sc">-</span> </span>
-<span id="cb27-18"><a href="#cb27-18" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">7</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">7</span>),</span>
-<span id="cb27-19"><a href="#cb27-19" tabindex="-1"></a>        <span class="at">trend_8 =</span> </span>
-<span id="cb27-20"><a href="#cb27-20" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">8</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">8</span>) <span class="sc">-</span> </span>
-<span id="cb27-21"><a href="#cb27-21" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">8</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">8</span>)</span>
-<span id="cb27-22"><a href="#cb27-22" tabindex="-1"></a>      ) <span class="sc">%&gt;%</span> <span class="fu">t</span>()</span>
-<span id="cb27-23"><a href="#cb27-23" tabindex="-1"></a>)</span>
-<span id="cb27-24"><a href="#cb27-24" tabindex="-1"></a></span>
-<span id="cb27-25"><a href="#cb27-25" tabindex="-1"></a>trend_treated <span class="ot">&lt;-</span> </span>
-<span id="cb27-26"><a href="#cb27-26" tabindex="-1"></a>  df_design_multiperiod_observed <span class="sc">%&gt;%</span></span>
-<span id="cb27-27"><a href="#cb27-27" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">filter</span>(</span>
-<span id="cb27-28"><a href="#cb27-28" tabindex="-1"></a>      group_i <span class="sc">&gt;</span> <span class="dv">0</span></span>
-<span id="cb27-29"><a href="#cb27-29" tabindex="-1"></a>    ) <span class="sc">%&gt;%</span></span>
-<span id="cb27-30"><a href="#cb27-30" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">group_by</span>(</span>
-<span id="cb27-31"><a href="#cb27-31" tabindex="-1"></a>      group_i</span>
-<span id="cb27-32"><a href="#cb27-32" tabindex="-1"></a>    ) <span class="sc">%&gt;%</span></span>
-<span id="cb27-33"><a href="#cb27-33" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">summarise</span>(</span>
-<span id="cb27-34"><a href="#cb27-34" tabindex="-1"></a>      <span class="at">trend_treated =</span> </span>
-<span id="cb27-35"><a href="#cb27-35" tabindex="-1"></a>        <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> group_i)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> group_i) <span class="sc">-</span> </span>
-<span id="cb27-36"><a href="#cb27-36" tabindex="-1"></a>        <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> group_i)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> group_i),</span>
-<span id="cb27-37"><a href="#cb27-37" tabindex="-1"></a>      <span class="at">proportion =</span> <span class="fu">sum</span>(z_it)<span class="sc">/</span><span class="fu">sum</span>(df_design_multiperiod<span class="sc">$</span>z_it)</span>
-<span id="cb27-38"><a href="#cb27-38" tabindex="-1"></a>    )</span>
-<span id="cb27-39"><a href="#cb27-39" tabindex="-1"></a></span>
-<span id="cb27-40"><a href="#cb27-40" tabindex="-1"></a>df_did <span class="ot">&lt;-</span> </span>
-<span id="cb27-41"><a href="#cb27-41" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">left_join</span>(</span>
-<span id="cb27-42"><a href="#cb27-42" tabindex="-1"></a>    trend_control,</span>
-<span id="cb27-43"><a href="#cb27-43" tabindex="-1"></a>    trend_treated, </span>
-<span id="cb27-44"><a href="#cb27-44" tabindex="-1"></a>    <span class="at">by=</span><span class="st">&quot;group_i&quot;</span></span>
-<span id="cb27-45"><a href="#cb27-45" tabindex="-1"></a>  )</span>
-<span id="cb27-46"><a href="#cb27-46" tabindex="-1"></a></span>
-<span id="cb27-47"><a href="#cb27-47" tabindex="-1"></a></span>
-<span id="cb27-48"><a href="#cb27-48" tabindex="-1"></a>df_did <span class="ot">&lt;-</span></span>
-<span id="cb27-49"><a href="#cb27-49" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span></span>
-<span id="cb27-50"><a href="#cb27-50" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">mutate</span>(</span>
-<span id="cb27-51"><a href="#cb27-51" tabindex="-1"></a>    <span class="at">did_dif =</span> trend_treated <span class="sc">-</span> trend_control</span>
-<span id="cb27-52"><a href="#cb27-52" tabindex="-1"></a>  )</span>
-<span id="cb27-53"><a href="#cb27-53" tabindex="-1"></a></span>
-<span id="cb27-54"><a href="#cb27-54" tabindex="-1"></a>df_did <span class="ot">&lt;-</span></span>
-<span id="cb27-55"><a href="#cb27-55" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span> </span>
-<span id="cb27-56"><a href="#cb27-56" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">select</span>(</span>
-<span id="cb27-57"><a href="#cb27-57" tabindex="-1"></a>    group_i,</span>
-<span id="cb27-58"><a href="#cb27-58" tabindex="-1"></a>    did_dif,</span>
-<span id="cb27-59"><a href="#cb27-59" tabindex="-1"></a>    proportion  </span>
-<span id="cb27-60"><a href="#cb27-60" tabindex="-1"></a>  )</span>
-<span id="cb27-61"><a href="#cb27-61" tabindex="-1"></a></span>
-<span id="cb27-62"><a href="#cb27-62" tabindex="-1"></a>df_did <span class="ot">&lt;-</span> </span>
-<span id="cb27-63"><a href="#cb27-63" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span></span>
-<span id="cb27-64"><a href="#cb27-64" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">left_join</span>(</span>
-<span id="cb27-65"><a href="#cb27-65" tabindex="-1"></a>  att_sample_multipleriod_group,</span>
-<span id="cb27-66"><a href="#cb27-66" tabindex="-1"></a>  <span class="at">by =</span> <span class="st">&quot;group_i&quot;</span></span>
-<span id="cb27-67"><a href="#cb27-67" tabindex="-1"></a>)</span>
-<span id="cb27-68"><a href="#cb27-68" tabindex="-1"></a></span>
-<span id="cb27-69"><a href="#cb27-69" tabindex="-1"></a>df_did</span></code></pre></div>
+<div class="sourceCode" id="cb26"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a>trend_control <span class="ot">&lt;-</span> </span>
+<span id="cb26-2"><a href="#cb26-2" tabindex="-1"></a>  tibble<span class="sc">::</span><span class="fu">tibble</span>(</span>
+<span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a>    <span class="at">group_i =</span> <span class="fu">c</span>(<span class="dv">5</span>,<span class="dv">6</span>,<span class="dv">7</span>,<span class="dv">8</span>),</span>
+<span id="cb26-4"><a href="#cb26-4" tabindex="-1"></a>    <span class="at">trend_control =</span> </span>
+<span id="cb26-5"><a href="#cb26-5" tabindex="-1"></a>      df_design_multiperiod_observed <span class="sc">%&gt;%</span></span>
+<span id="cb26-6"><a href="#cb26-6" tabindex="-1"></a>      dplyr<span class="sc">::</span><span class="fu">filter</span>(</span>
+<span id="cb26-7"><a href="#cb26-7" tabindex="-1"></a>        group_i <span class="sc">==</span> <span class="dv">0</span></span>
+<span id="cb26-8"><a href="#cb26-8" tabindex="-1"></a>      ) <span class="sc">%&gt;%</span></span>
+<span id="cb26-9"><a href="#cb26-9" tabindex="-1"></a>      dplyr<span class="sc">::</span><span class="fu">summarize</span>(</span>
+<span id="cb26-10"><a href="#cb26-10" tabindex="-1"></a>        <span class="at">trend_5 =</span> </span>
+<span id="cb26-11"><a href="#cb26-11" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">5</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">5</span>) <span class="sc">-</span> </span>
+<span id="cb26-12"><a href="#cb26-12" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">5</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">5</span>),</span>
+<span id="cb26-13"><a href="#cb26-13" tabindex="-1"></a>        <span class="at">trend_6 =</span> </span>
+<span id="cb26-14"><a href="#cb26-14" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">6</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">6</span>) <span class="sc">-</span> </span>
+<span id="cb26-15"><a href="#cb26-15" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">6</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">6</span>),</span>
+<span id="cb26-16"><a href="#cb26-16" tabindex="-1"></a>        <span class="at">trend_7 =</span> </span>
+<span id="cb26-17"><a href="#cb26-17" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">7</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">7</span>) <span class="sc">-</span> </span>
+<span id="cb26-18"><a href="#cb26-18" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">7</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">7</span>),</span>
+<span id="cb26-19"><a href="#cb26-19" tabindex="-1"></a>        <span class="at">trend_8 =</span> </span>
+<span id="cb26-20"><a href="#cb26-20" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> <span class="dv">8</span>)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> <span class="dv">8</span>) <span class="sc">-</span> </span>
+<span id="cb26-21"><a href="#cb26-21" tabindex="-1"></a>          <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> <span class="dv">8</span>))<span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> <span class="dv">8</span>)</span>
+<span id="cb26-22"><a href="#cb26-22" tabindex="-1"></a>      ) <span class="sc">%&gt;%</span> <span class="fu">t</span>()</span>
+<span id="cb26-23"><a href="#cb26-23" tabindex="-1"></a>)</span>
+<span id="cb26-24"><a href="#cb26-24" tabindex="-1"></a></span>
+<span id="cb26-25"><a href="#cb26-25" tabindex="-1"></a>trend_treated <span class="ot">&lt;-</span> </span>
+<span id="cb26-26"><a href="#cb26-26" tabindex="-1"></a>  df_design_multiperiod_observed <span class="sc">%&gt;%</span></span>
+<span id="cb26-27"><a href="#cb26-27" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">filter</span>(</span>
+<span id="cb26-28"><a href="#cb26-28" tabindex="-1"></a>      group_i <span class="sc">&gt;</span> <span class="dv">0</span></span>
+<span id="cb26-29"><a href="#cb26-29" tabindex="-1"></a>    ) <span class="sc">%&gt;%</span></span>
+<span id="cb26-30"><a href="#cb26-30" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">group_by</span>(</span>
+<span id="cb26-31"><a href="#cb26-31" tabindex="-1"></a>      group_i</span>
+<span id="cb26-32"><a href="#cb26-32" tabindex="-1"></a>    ) <span class="sc">%&gt;%</span></span>
+<span id="cb26-33"><a href="#cb26-33" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">summarise</span>(</span>
+<span id="cb26-34"><a href="#cb26-34" tabindex="-1"></a>      <span class="at">trend_treated =</span> </span>
+<span id="cb26-35"><a href="#cb26-35" tabindex="-1"></a>        <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&gt;=</span> group_i)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&gt;=</span> group_i) <span class="sc">-</span> </span>
+<span id="cb26-36"><a href="#cb26-36" tabindex="-1"></a>        <span class="fu">sum</span>(y_it <span class="sc">*</span> (time <span class="sc">&lt;</span> group_i)) <span class="sc">/</span> <span class="fu">sum</span>(time <span class="sc">&lt;</span> group_i),</span>
+<span id="cb26-37"><a href="#cb26-37" tabindex="-1"></a>      <span class="at">proportion =</span> <span class="fu">sum</span>(z_it)<span class="sc">/</span><span class="fu">sum</span>(df_design_multiperiod<span class="sc">$</span>z_it)</span>
+<span id="cb26-38"><a href="#cb26-38" tabindex="-1"></a>    )</span>
+<span id="cb26-39"><a href="#cb26-39" tabindex="-1"></a></span>
+<span id="cb26-40"><a href="#cb26-40" tabindex="-1"></a>df_did <span class="ot">&lt;-</span> </span>
+<span id="cb26-41"><a href="#cb26-41" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">left_join</span>(</span>
+<span id="cb26-42"><a href="#cb26-42" tabindex="-1"></a>    trend_control,</span>
+<span id="cb26-43"><a href="#cb26-43" tabindex="-1"></a>    trend_treated, </span>
+<span id="cb26-44"><a href="#cb26-44" tabindex="-1"></a>    <span class="at">by=</span><span class="st">&quot;group_i&quot;</span></span>
+<span id="cb26-45"><a href="#cb26-45" tabindex="-1"></a>  )</span>
+<span id="cb26-46"><a href="#cb26-46" tabindex="-1"></a></span>
+<span id="cb26-47"><a href="#cb26-47" tabindex="-1"></a></span>
+<span id="cb26-48"><a href="#cb26-48" tabindex="-1"></a>df_did <span class="ot">&lt;-</span></span>
+<span id="cb26-49"><a href="#cb26-49" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span></span>
+<span id="cb26-50"><a href="#cb26-50" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">mutate</span>(</span>
+<span id="cb26-51"><a href="#cb26-51" tabindex="-1"></a>    <span class="at">did_dif =</span> trend_treated <span class="sc">-</span> trend_control</span>
+<span id="cb26-52"><a href="#cb26-52" tabindex="-1"></a>  )</span>
+<span id="cb26-53"><a href="#cb26-53" tabindex="-1"></a></span>
+<span id="cb26-54"><a href="#cb26-54" tabindex="-1"></a>df_did <span class="ot">&lt;-</span></span>
+<span id="cb26-55"><a href="#cb26-55" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span> </span>
+<span id="cb26-56"><a href="#cb26-56" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">select</span>(</span>
+<span id="cb26-57"><a href="#cb26-57" tabindex="-1"></a>    group_i,</span>
+<span id="cb26-58"><a href="#cb26-58" tabindex="-1"></a>    did_dif,</span>
+<span id="cb26-59"><a href="#cb26-59" tabindex="-1"></a>    proportion  </span>
+<span id="cb26-60"><a href="#cb26-60" tabindex="-1"></a>  )</span>
+<span id="cb26-61"><a href="#cb26-61" tabindex="-1"></a></span>
+<span id="cb26-62"><a href="#cb26-62" tabindex="-1"></a>df_did <span class="ot">&lt;-</span> </span>
+<span id="cb26-63"><a href="#cb26-63" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span></span>
+<span id="cb26-64"><a href="#cb26-64" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">left_join</span>(</span>
+<span id="cb26-65"><a href="#cb26-65" tabindex="-1"></a>  att_sample_multipleriod_group,</span>
+<span id="cb26-66"><a href="#cb26-66" tabindex="-1"></a>  <span class="at">by =</span> <span class="st">&quot;group_i&quot;</span></span>
+<span id="cb26-67"><a href="#cb26-67" tabindex="-1"></a>)</span>
+<span id="cb26-68"><a href="#cb26-68" tabindex="-1"></a></span>
+<span id="cb26-69"><a href="#cb26-69" tabindex="-1"></a>df_did</span></code></pre></div>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":["group_i"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["did_dif"],"name":[2],"type":["dbl[,1]"],"align":["right"]},{"label":["proportion"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["att_sample"],"name":[4],"type":["dbl"],"align":["right"]}],"data":[{"1":"5","2":"0.1846163","3":"0.74228479","4":"0.1818912"},{"1":"6","2":"-0.4770843","3":"0.17325393","4":"-0.4782172"},{"1":"7","2":"-0.4044834","3":"0.04547916","4":"-0.4059614"},{"1":"8","2":"-0.1614461","3":"0.03898213","4":"-0.1652985"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
 <p>これらの推定の加重平均をとれば、</p>
-<div class="sourceCode" id="cb28"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" tabindex="-1"></a><span class="fu">cbind</span>(</span>
-<span id="cb28-2"><a href="#cb28-2" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span> </span>
-<span id="cb28-3"><a href="#cb28-3" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">summarize</span>(</span>
-<span id="cb28-4"><a href="#cb28-4" tabindex="-1"></a>      <span class="at">did_dif_average =</span> <span class="fu">sum</span>(did_dif <span class="sc">*</span> proportion)</span>
-<span id="cb28-5"><a href="#cb28-5" tabindex="-1"></a>    ),</span>
-<span id="cb28-6"><a href="#cb28-6" tabindex="-1"></a>  att_sample_multiperiod</span>
-<span id="cb28-7"><a href="#cb28-7" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a><span class="fu">cbind</span>(</span>
+<span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>  df_did <span class="sc">%&gt;%</span> </span>
+<span id="cb27-3"><a href="#cb27-3" tabindex="-1"></a>    dplyr<span class="sc">::</span><span class="fu">summarize</span>(</span>
+<span id="cb27-4"><a href="#cb27-4" tabindex="-1"></a>      <span class="at">did_dif_average =</span> <span class="fu">sum</span>(did_dif <span class="sc">*</span> proportion)</span>
+<span id="cb27-5"><a href="#cb27-5" tabindex="-1"></a>    ),</span>
+<span id="cb27-6"><a href="#cb27-6" tabindex="-1"></a>  att_sample_multiperiod</span>
+<span id="cb27-7"><a href="#cb27-7" tabindex="-1"></a>)</span></code></pre></div>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":["did_dif_average"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["att_sample_multiperiod"],"name":[2],"type":["dbl"],"align":["right"]}],"data":[{"1":"0.02969205","2":"0.02725558"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
@@ -3564,22 +3561,22 @@ TWFE推定による誤った推定</h3>
 <p><span class="math display">\[\begin{align*}
 Y_{it} = \mu_i + \theta_t + \tau Z_{it} + \epsilon_{it}
 \end{align*}\]</span></p>
-<div class="sourceCode" id="cb29"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb29-1"><a href="#cb29-1" tabindex="-1"></a>lsdv <span class="ot">&lt;-</span> </span>
-<span id="cb29-2"><a href="#cb29-2" tabindex="-1"></a>  plm<span class="sc">::</span><span class="fu">plm</span>(</span>
-<span id="cb29-3"><a href="#cb29-3" tabindex="-1"></a>    <span class="at">formula =</span> y_it <span class="sc">~</span> z_it,</span>
-<span id="cb29-4"><a href="#cb29-4" tabindex="-1"></a>    <span class="at">data =</span> df_design_multiperiod_observed, </span>
-<span id="cb29-5"><a href="#cb29-5" tabindex="-1"></a>    <span class="at">index =</span> <span class="fu">c</span>(</span>
-<span id="cb29-6"><a href="#cb29-6" tabindex="-1"></a>      <span class="st">&quot;id&quot;</span>,</span>
-<span id="cb29-7"><a href="#cb29-7" tabindex="-1"></a>      <span class="st">&quot;time&quot;</span></span>
-<span id="cb29-8"><a href="#cb29-8" tabindex="-1"></a>    ),</span>
-<span id="cb29-9"><a href="#cb29-9" tabindex="-1"></a>    <span class="at">effect =</span> <span class="st">&quot;twoways&quot;</span></span>
-<span id="cb29-10"><a href="#cb29-10" tabindex="-1"></a>  )</span>
-<span id="cb29-11"><a href="#cb29-11" tabindex="-1"></a>clubSandwich<span class="sc">::</span><span class="fu">coef_test</span>(</span>
-<span id="cb29-12"><a href="#cb29-12" tabindex="-1"></a>  lsdv, </span>
-<span id="cb29-13"><a href="#cb29-13" tabindex="-1"></a>  <span class="at">vcov =</span> <span class="st">&quot;CR1&quot;</span>, </span>
-<span id="cb29-14"><a href="#cb29-14" tabindex="-1"></a>  <span class="at">cluster =</span> <span class="st">&quot;id&quot;</span>, </span>
-<span id="cb29-15"><a href="#cb29-15" tabindex="-1"></a>  <span class="at">test =</span> <span class="st">&quot;naive-t&quot;</span></span>
-<span id="cb29-16"><a href="#cb29-16" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" tabindex="-1"></a>lsdv <span class="ot">&lt;-</span> </span>
+<span id="cb28-2"><a href="#cb28-2" tabindex="-1"></a>  plm<span class="sc">::</span><span class="fu">plm</span>(</span>
+<span id="cb28-3"><a href="#cb28-3" tabindex="-1"></a>    <span class="at">formula =</span> y_it <span class="sc">~</span> z_it,</span>
+<span id="cb28-4"><a href="#cb28-4" tabindex="-1"></a>    <span class="at">data =</span> df_design_multiperiod_observed, </span>
+<span id="cb28-5"><a href="#cb28-5" tabindex="-1"></a>    <span class="at">index =</span> <span class="fu">c</span>(</span>
+<span id="cb28-6"><a href="#cb28-6" tabindex="-1"></a>      <span class="st">&quot;id&quot;</span>,</span>
+<span id="cb28-7"><a href="#cb28-7" tabindex="-1"></a>      <span class="st">&quot;time&quot;</span></span>
+<span id="cb28-8"><a href="#cb28-8" tabindex="-1"></a>    ),</span>
+<span id="cb28-9"><a href="#cb28-9" tabindex="-1"></a>    <span class="at">effect =</span> <span class="st">&quot;twoways&quot;</span></span>
+<span id="cb28-10"><a href="#cb28-10" tabindex="-1"></a>  )</span>
+<span id="cb28-11"><a href="#cb28-11" tabindex="-1"></a>clubSandwich<span class="sc">::</span><span class="fu">coef_test</span>(</span>
+<span id="cb28-12"><a href="#cb28-12" tabindex="-1"></a>  lsdv, </span>
+<span id="cb28-13"><a href="#cb28-13" tabindex="-1"></a>  <span class="at">vcov =</span> <span class="st">&quot;CR1&quot;</span>, </span>
+<span id="cb28-14"><a href="#cb28-14" tabindex="-1"></a>  <span class="at">cluster =</span> <span class="st">&quot;id&quot;</span>, </span>
+<span id="cb28-15"><a href="#cb28-15" tabindex="-1"></a>  <span class="at">test =</span> <span class="st">&quot;naive-t&quot;</span></span>
+<span id="cb28-16"><a href="#cb28-16" tabindex="-1"></a>)</span></code></pre></div>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Coef"],"name":[1],"type":["chr"],"align":["left"]},{"label":["beta"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["tstat"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df_t"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["p_t"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"z_it","2":"-0.0316089","3":"0.01290855","4":"-2.44868","5":"999","6":"0.01450909","_rn_":"z_it"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
@@ -3590,36 +3587,36 @@ Y_{it} = \mu_i + \theta_t + \tau Z_{it} + \epsilon_{it}
 <h3><span class="header-section-number">2.2.3</span>
 Goodman-baconによる分解</h3>
 <p>これは、先に処置を受けた群を統制群とした差の差推定量の値が全て負の値をとり、全体の処置群平均処置効果推定の符号を反転させてしまっているからである。Goodman-baconによる分解を行えばこの点を確認できる。</p>
-<div class="sourceCode" id="cb30"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" tabindex="-1"></a>result <span class="ot">&lt;-</span> </span>
-<span id="cb30-2"><a href="#cb30-2" tabindex="-1"></a>  bacondecomp<span class="sc">::</span><span class="fu">bacon</span>(</span>
-<span id="cb30-3"><a href="#cb30-3" tabindex="-1"></a>    <span class="at">formula =</span> y_it <span class="sc">~</span> z_it, </span>
-<span id="cb30-4"><a href="#cb30-4" tabindex="-1"></a>    <span class="at">data =</span> df_design_multiperiod_observed, </span>
-<span id="cb30-5"><a href="#cb30-5" tabindex="-1"></a>    <span class="at">id_var =</span> <span class="st">&quot;id&quot;</span>, </span>
-<span id="cb30-6"><a href="#cb30-6" tabindex="-1"></a>    <span class="at">time_var =</span> <span class="st">&quot;time&quot;</span></span>
-<span id="cb30-7"><a href="#cb30-7" tabindex="-1"></a>  )</span></code></pre></div>
+<div class="sourceCode" id="cb29"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb29-1"><a href="#cb29-1" tabindex="-1"></a>result <span class="ot">&lt;-</span> </span>
+<span id="cb29-2"><a href="#cb29-2" tabindex="-1"></a>  bacondecomp<span class="sc">::</span><span class="fu">bacon</span>(</span>
+<span id="cb29-3"><a href="#cb29-3" tabindex="-1"></a>    <span class="at">formula =</span> y_it <span class="sc">~</span> z_it, </span>
+<span id="cb29-4"><a href="#cb29-4" tabindex="-1"></a>    <span class="at">data =</span> df_design_multiperiod_observed, </span>
+<span id="cb29-5"><a href="#cb29-5" tabindex="-1"></a>    <span class="at">id_var =</span> <span class="st">&quot;id&quot;</span>, </span>
+<span id="cb29-6"><a href="#cb29-6" tabindex="-1"></a>    <span class="at">time_var =</span> <span class="st">&quot;time&quot;</span></span>
+<span id="cb29-7"><a href="#cb29-7" tabindex="-1"></a>  )</span></code></pre></div>
 <pre><code>##                       type  weight  avg_est
 ## 1 Earlier vs Later Treated 0.11180  0.09151
 ## 2 Later vs Earlier Treated 0.10536 -0.36396
 ## 3     Treated vs Untreated 0.78284 -0.00446</code></pre>
 <p>上の表は、TWFE推定が三種類の差の差推定量<code>avg_est</code>の、<code>weight</code>を荷重とした加重平均になっていることを表している。ここで、<code>Treated vs Untreated</code>は観測期間中に処置を受けていない統制群に対して処置群を比較する通常の差の差推定であり、<code>Earlier vs Later Treated</code>はまだ処置を受けていない処置群(<code>Later</code>)を統制群として、今ちょうど処置を受けた処置群(<code>Earlier</code>)と比較する差の差推定である。これらは、適切な平行トレンド仮定の下で、いずれも処置群平均処処置効果の不偏推定量となりうる。一方で、<code>Later vs Earlier Treated</code>は、今ちょうど処置を受けた処置群(<code>Later</code>)に対して、既に処置を受けた処置群(<code>Earlier</code>)の「処置を受けている状態の顕在結果」をあたかも統制群かのように比較するものである。この<code>Later vs Earlier Treated</code>による比較は、必ずしも処置群平均処置効果の推定と解釈することができない。</p>
-<div class="sourceCode" id="cb32"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" tabindex="-1"></a>result <span class="sc">%&gt;%</span>  </span>
-<span id="cb32-2"><a href="#cb32-2" tabindex="-1"></a>  <span class="fu">ggplot</span>() <span class="sc">+</span> </span>
-<span id="cb32-3"><a href="#cb32-3" tabindex="-1"></a>  <span class="fu">aes</span>(</span>
-<span id="cb32-4"><a href="#cb32-4" tabindex="-1"></a>    <span class="at">x =</span> weight, </span>
-<span id="cb32-5"><a href="#cb32-5" tabindex="-1"></a>    <span class="at">y =</span> estimate, </span>
-<span id="cb32-6"><a href="#cb32-6" tabindex="-1"></a>    <span class="at">color =</span> <span class="fu">factor</span>(type)</span>
-<span id="cb32-7"><a href="#cb32-7" tabindex="-1"></a>  ) <span class="sc">+</span> </span>
-<span id="cb32-8"><a href="#cb32-8" tabindex="-1"></a>  <span class="fu">labs</span>(</span>
-<span id="cb32-9"><a href="#cb32-9" tabindex="-1"></a>    <span class="at">x =</span> <span class="st">&quot;Weight&quot;</span>, </span>
-<span id="cb32-10"><a href="#cb32-10" tabindex="-1"></a>    <span class="at">y =</span> <span class="st">&quot;Estimates&quot;</span>, </span>
-<span id="cb32-11"><a href="#cb32-11" tabindex="-1"></a>    <span class="at">color =</span> <span class="st">&quot;Type&quot;</span></span>
-<span id="cb32-12"><a href="#cb32-12" tabindex="-1"></a>  ) <span class="sc">+</span> </span>
-<span id="cb32-13"><a href="#cb32-13" tabindex="-1"></a>  <span class="fu">geom_point</span>() <span class="sc">+</span></span>
-<span id="cb32-14"><a href="#cb32-14" tabindex="-1"></a>  <span class="fu">scale_color_viridis_d</span>() <span class="sc">+</span></span>
-<span id="cb32-15"><a href="#cb32-15" tabindex="-1"></a>  <span class="fu">theme_classic</span>() <span class="sc">+</span></span>
-<span id="cb32-16"><a href="#cb32-16" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
-<span id="cb32-17"><a href="#cb32-17" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span></span>
-<span id="cb32-18"><a href="#cb32-18" tabindex="-1"></a>  )</span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb31-1"><a href="#cb31-1" tabindex="-1"></a>result <span class="sc">%&gt;%</span>  </span>
+<span id="cb31-2"><a href="#cb31-2" tabindex="-1"></a>  <span class="fu">ggplot</span>() <span class="sc">+</span> </span>
+<span id="cb31-3"><a href="#cb31-3" tabindex="-1"></a>  <span class="fu">aes</span>(</span>
+<span id="cb31-4"><a href="#cb31-4" tabindex="-1"></a>    <span class="at">x =</span> weight, </span>
+<span id="cb31-5"><a href="#cb31-5" tabindex="-1"></a>    <span class="at">y =</span> estimate, </span>
+<span id="cb31-6"><a href="#cb31-6" tabindex="-1"></a>    <span class="at">color =</span> <span class="fu">factor</span>(type)</span>
+<span id="cb31-7"><a href="#cb31-7" tabindex="-1"></a>  ) <span class="sc">+</span> </span>
+<span id="cb31-8"><a href="#cb31-8" tabindex="-1"></a>  <span class="fu">labs</span>(</span>
+<span id="cb31-9"><a href="#cb31-9" tabindex="-1"></a>    <span class="at">x =</span> <span class="st">&quot;Weight&quot;</span>, </span>
+<span id="cb31-10"><a href="#cb31-10" tabindex="-1"></a>    <span class="at">y =</span> <span class="st">&quot;Estimates&quot;</span>, </span>
+<span id="cb31-11"><a href="#cb31-11" tabindex="-1"></a>    <span class="at">color =</span> <span class="st">&quot;Type&quot;</span></span>
+<span id="cb31-12"><a href="#cb31-12" tabindex="-1"></a>  ) <span class="sc">+</span> </span>
+<span id="cb31-13"><a href="#cb31-13" tabindex="-1"></a>  <span class="fu">geom_point</span>() <span class="sc">+</span></span>
+<span id="cb31-14"><a href="#cb31-14" tabindex="-1"></a>  <span class="fu">scale_color_viridis_d</span>() <span class="sc">+</span></span>
+<span id="cb31-15"><a href="#cb31-15" tabindex="-1"></a>  <span class="fu">theme_classic</span>() <span class="sc">+</span></span>
+<span id="cb31-16"><a href="#cb31-16" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb31-17"><a href="#cb31-17" tabindex="-1"></a>    <span class="at">legend.position =</span> <span class="st">&quot;bottom&quot;</span></span>
+<span id="cb31-18"><a href="#cb31-18" tabindex="-1"></a>  )</span></code></pre></div>
 <p><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABUAAAAPACAMAAADDuCPrAAABPlBMVEUAAAAAADoAAGYAOjoAOmYAOpAAZmYAZrYhkIwzMzM6AAA6OgA6Ojo6OmY6OpA6ZmY6ZpA6ZrY6kLY6kNtEAVRNTU1NTW5NTY5Nbo5NbqtNjshmAABmADpmOgBmOjpmOpBmZjpmZmZmZpBmkGZmkJBmkLZmtttmtv9uTU1ujqtuq+SOTU2Obm6Oq6uOyOSOyP+QOgCQOjqQZjqQZmaQZpCQkDqQkGaQkLaQttuQ27aQ2/+rbk2rjm6r5P+2ZgC2Zjq2Zma2kDq2kGa2kJC2tra2ttu229u22/+2/7a2///Ijk3Ijm7I5P/I///bkDrbkGbbtmbbtpDbtrbbttvb25Db27bb29vb2//b/7bb///kq27kyKvk///95yX/tmb/yI7/25D/27b/29v/5Kv/5Mj//7b//8j//9v//+T///8orIaMAAAACXBIWXMAAB2HAAAdhwGP5fFlAAAgAElEQVR4nO3d/WMbhYHnYbmEi3FpgcVKgZQe9FpiSLdwsLfHEWq2vbYcAVzo7m0vKXaS5sXR//8PnGY0erNebH81ssej5/khjseSRp6RPp53dXoARDqX/QQArioBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQuqCAdoQaaB0BBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCK4Xt+ed73e7730wO+vtvut0b04PK0Qgo0DqrhO3Z7W7hZ9+OB31dDune+N3J0Qgo0DqrhO1u981vek/udN/8YTjkQffGb3vFoMmolqMRUKB1Vgjb470yk89uj5Y3n9/pftgrBw2+ToxGQIHWWSFs97tvVV8/qIY8u10ted4dDRqORkCB1lkhbHerxcwHVUinfiSgQOvlYXt+p1p1f7w33gg6MLFW/1JFQIHWWUtA74+XSQUUaK1aAnpin/sDhzEBm2ANS6AP9m58ePLGAgq0T/0BvT+7/CmgQBvVvhf+63n9FFCghVY6DvSDqa+F53e7b3w757YCCrRPrWcilWd3/jDvtgIKtM8KYXt+p/vGiXPh7y/op4ACLbRK2J5MXI3p8V5/ObS6PFPhxMlJAgq0z0phe/J5P5Xvl8ucZUAfdAUU2ByuSA9smsO+Wh5IQIENc3hYV0HbFNDdvgsYDXClHR7WVtAWBXR399SCSixsvMPD+granoDu7p5a0DMkFmg5AZ1jd/fUgp4hsUDbCegcpwf0DIkFWk9A5xBQ4EzsRJoloMDZOIxp1pk3gQoobDgH0s864054/QRq0qKAnn6Up34CdWpTQE+nn0CNNiugADUSUICQgAKEBBQgJKAAoY0IqJ3vwDpsQkAd/gmsxQYE1AlIwHq0P6BOgQfWREABQgIKEBJQgFD7A2onErAmGxBQhzEB67EJAXUgPbAWGxFQgHUQUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgJKAAIQEFCAkoQEhAAUICChASUICQgAKEBBQgtFLYnn++1+2+/80pg8rRCCjQOquE7dntbuFn3y4dNBiNgAKts0rY7nbf/Kb35E73zR+WDRqMRkCB1lkhbI/3ygXNZ7dv/G7JoGo0Agq0zgphu999q/r6wZJB1WgEFGidFcJ2t/th+fVBVc35g6rRCCjQOnnYnt+p1tMf7w23eM4Z9FJFQIHWEVCAUC0BHR61NGfQcDQCCrTOupdAh6MRUKB1BBQgZC88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" width="672" style="display: block; margin: auto;" /></p>
 <p>上の図は、それぞれの差の差推定を種別<code>Type</code>ごとに色分けしてプロットしたものである。上の表で示した通り、必ずしも処置群平均処置効果と解釈できるとは限らない<code>Later vs Earlier Treated</code>の差の差推定が負の値を取っており、これらの不適切な比較に荷重が与えられることによって、母集団における処置群平均処置効果の期間平均<code>att_pop_multiperiod</code>
 (0.0320154)と大きく乖離している。</p>
@@ -3636,71 +3633,71 @@ Y_{it} =&amp; \beta + \sum_{k=5}^{8} \mu_k G_{ki} + \sum_{t&#39;=2}^{T}
 \tau_{kt&#39;} G_{ki} 1\{t=t&#39;\} + \epsilon_{it}
 \end{align*}\]</span></p>
 <p>このコーホートダミーと時点ダミーの交差項<code>G_{kt} 1\{t=t&#39;\}</code>はコーホート<code>k</code>に属する個体<code>i</code>が処置時点<code>t&#39;</code>に到達して処置を割り当てられているかを表すダミー変数であるから、以下に処置割当を表す<code>z_it_t_kt&#39;</code>として生成する。これらの処置割当変数<code>z_it_505</code>…<code>z_it_810</code>に加え、コーホートダミー、時点ダミーをすべて入れた回帰を行えば、各グループの、各処置時点ごとにおける処置群平均処置効果を<span class="math inline">\(\tau_{kt}\)</span>の最小二乗推定量として推定することができる。なお、コーホートダミーの代わりに個体ダミーを入れても同値な結果が得られるため、以下では個体ダミーを入れたTWFE推定を行う。</p>
-<div class="sourceCode" id="cb33"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb33-1"><a href="#cb33-1" tabindex="-1"></a>df_design_multiperiod_observed<span class="sc">$</span>z_it_t <span class="ot">&lt;-</span> </span>
-<span id="cb33-2"><a href="#cb33-2" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>z_it <span class="sc">*</span> </span>
-<span id="cb33-3"><a href="#cb33-3" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>time <span class="sc">+</span></span>
-<span id="cb33-4"><a href="#cb33-4" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>z_it <span class="sc">*</span> </span>
-<span id="cb33-5"><a href="#cb33-5" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>group_i<span class="sc">*</span><span class="dv">100</span></span>
-<span id="cb33-6"><a href="#cb33-6" tabindex="-1"></a>df_design_multiperiod_observed <span class="ot">&lt;-</span> </span>
-<span id="cb33-7"><a href="#cb33-7" tabindex="-1"></a>  fastDummies<span class="sc">::</span><span class="fu">dummy_cols</span>(</span>
-<span id="cb33-8"><a href="#cb33-8" tabindex="-1"></a>    df_design_multiperiod_observed,</span>
-<span id="cb33-9"><a href="#cb33-9" tabindex="-1"></a>    <span class="at">select_columns =</span> <span class="st">&quot;z_it_t&quot;</span>,</span>
-<span id="cb33-10"><a href="#cb33-10" tabindex="-1"></a>  )</span>
-<span id="cb33-11"><a href="#cb33-11" tabindex="-1"></a>df_design_multiperiod_observed <span class="ot">&lt;-</span> </span>
-<span id="cb33-12"><a href="#cb33-12" tabindex="-1"></a>  df_design_multiperiod_observed <span class="sc">%&gt;%</span> </span>
-<span id="cb33-13"><a href="#cb33-13" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">select</span>(<span class="sc">-</span><span class="st">&quot;z_it_t_0&quot;</span>)</span>
-<span id="cb33-14"><a href="#cb33-14" tabindex="-1"></a></span>
-<span id="cb33-15"><a href="#cb33-15" tabindex="-1"></a>fml <span class="ot">&lt;-</span> <span class="fu">as.formula</span>(</span>
-<span id="cb33-16"><a href="#cb33-16" tabindex="-1"></a>  <span class="fu">paste</span>(<span class="st">&quot;y_it ~ &quot;</span>,</span>
-<span id="cb33-17"><a href="#cb33-17" tabindex="-1"></a>        <span class="fu">paste</span>(</span>
-<span id="cb33-18"><a href="#cb33-18" tabindex="-1"></a>          <span class="fu">grep</span>(</span>
-<span id="cb33-19"><a href="#cb33-19" tabindex="-1"></a>            <span class="st">&quot;z_it_t_&quot;</span>, </span>
-<span id="cb33-20"><a href="#cb33-20" tabindex="-1"></a>            <span class="fu">names</span>(df_design_multiperiod_observed), </span>
-<span id="cb33-21"><a href="#cb33-21" tabindex="-1"></a>            <span class="at">value =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb33-22"><a href="#cb33-22" tabindex="-1"></a>          <span class="at">collapse =</span> <span class="st">&quot;+&quot;</span></span>
-<span id="cb33-23"><a href="#cb33-23" tabindex="-1"></a>        )</span>
-<span id="cb33-24"><a href="#cb33-24" tabindex="-1"></a>      )</span>
-<span id="cb33-25"><a href="#cb33-25" tabindex="-1"></a>)</span>
-<span id="cb33-26"><a href="#cb33-26" tabindex="-1"></a>        </span>
-<span id="cb33-27"><a href="#cb33-27" tabindex="-1"></a>                     </span>
-<span id="cb33-28"><a href="#cb33-28" tabindex="-1"></a>lsdv <span class="ot">&lt;-</span> </span>
-<span id="cb33-29"><a href="#cb33-29" tabindex="-1"></a>  plm<span class="sc">::</span><span class="fu">plm</span>(</span>
-<span id="cb33-30"><a href="#cb33-30" tabindex="-1"></a>    <span class="at">formula =</span> fml,</span>
-<span id="cb33-31"><a href="#cb33-31" tabindex="-1"></a>    <span class="at">data =</span> df_design_multiperiod_observed,</span>
-<span id="cb33-32"><a href="#cb33-32" tabindex="-1"></a>    <span class="at">index =</span></span>
-<span id="cb33-33"><a href="#cb33-33" tabindex="-1"></a>      <span class="fu">c</span>(</span>
-<span id="cb33-34"><a href="#cb33-34" tabindex="-1"></a>        <span class="st">&quot;id&quot;</span>,</span>
-<span id="cb33-35"><a href="#cb33-35" tabindex="-1"></a>        <span class="st">&quot;time&quot;</span></span>
-<span id="cb33-36"><a href="#cb33-36" tabindex="-1"></a>      ),</span>
-<span id="cb33-37"><a href="#cb33-37" tabindex="-1"></a>    <span class="at">effect =</span> <span class="st">&quot;twoways&quot;</span></span>
-<span id="cb33-38"><a href="#cb33-38" tabindex="-1"></a>  )</span>
-<span id="cb33-39"><a href="#cb33-39" tabindex="-1"></a></span>
-<span id="cb33-40"><a href="#cb33-40" tabindex="-1"></a>clubSandwich<span class="sc">::</span><span class="fu">coef_test</span>(</span>
-<span id="cb33-41"><a href="#cb33-41" tabindex="-1"></a>  lsdv,</span>
-<span id="cb33-42"><a href="#cb33-42" tabindex="-1"></a>  <span class="at">vcov =</span> <span class="st">&quot;CR1&quot;</span>,</span>
-<span id="cb33-43"><a href="#cb33-43" tabindex="-1"></a>  <span class="at">cluster =</span> <span class="st">&quot;id&quot;</span>,</span>
-<span id="cb33-44"><a href="#cb33-44" tabindex="-1"></a>  <span class="at">test =</span> <span class="st">&quot;naive-t&quot;</span></span>
-<span id="cb33-45"><a href="#cb33-45" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb32"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" tabindex="-1"></a>df_design_multiperiod_observed<span class="sc">$</span>z_it_t <span class="ot">&lt;-</span> </span>
+<span id="cb32-2"><a href="#cb32-2" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>z_it <span class="sc">*</span> </span>
+<span id="cb32-3"><a href="#cb32-3" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>time <span class="sc">+</span></span>
+<span id="cb32-4"><a href="#cb32-4" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>z_it <span class="sc">*</span> </span>
+<span id="cb32-5"><a href="#cb32-5" tabindex="-1"></a>  df_design_multiperiod_observed<span class="sc">$</span>group_i<span class="sc">*</span><span class="dv">100</span></span>
+<span id="cb32-6"><a href="#cb32-6" tabindex="-1"></a>df_design_multiperiod_observed <span class="ot">&lt;-</span> </span>
+<span id="cb32-7"><a href="#cb32-7" tabindex="-1"></a>  fastDummies<span class="sc">::</span><span class="fu">dummy_cols</span>(</span>
+<span id="cb32-8"><a href="#cb32-8" tabindex="-1"></a>    df_design_multiperiod_observed,</span>
+<span id="cb32-9"><a href="#cb32-9" tabindex="-1"></a>    <span class="at">select_columns =</span> <span class="st">&quot;z_it_t&quot;</span>,</span>
+<span id="cb32-10"><a href="#cb32-10" tabindex="-1"></a>  )</span>
+<span id="cb32-11"><a href="#cb32-11" tabindex="-1"></a>df_design_multiperiod_observed <span class="ot">&lt;-</span> </span>
+<span id="cb32-12"><a href="#cb32-12" tabindex="-1"></a>  df_design_multiperiod_observed <span class="sc">%&gt;%</span> </span>
+<span id="cb32-13"><a href="#cb32-13" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">select</span>(<span class="sc">-</span><span class="st">&quot;z_it_t_0&quot;</span>)</span>
+<span id="cb32-14"><a href="#cb32-14" tabindex="-1"></a></span>
+<span id="cb32-15"><a href="#cb32-15" tabindex="-1"></a>fml <span class="ot">&lt;-</span> <span class="fu">as.formula</span>(</span>
+<span id="cb32-16"><a href="#cb32-16" tabindex="-1"></a>  <span class="fu">paste</span>(<span class="st">&quot;y_it ~ &quot;</span>,</span>
+<span id="cb32-17"><a href="#cb32-17" tabindex="-1"></a>        <span class="fu">paste</span>(</span>
+<span id="cb32-18"><a href="#cb32-18" tabindex="-1"></a>          <span class="fu">grep</span>(</span>
+<span id="cb32-19"><a href="#cb32-19" tabindex="-1"></a>            <span class="st">&quot;z_it_t_&quot;</span>, </span>
+<span id="cb32-20"><a href="#cb32-20" tabindex="-1"></a>            <span class="fu">names</span>(df_design_multiperiod_observed), </span>
+<span id="cb32-21"><a href="#cb32-21" tabindex="-1"></a>            <span class="at">value =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb32-22"><a href="#cb32-22" tabindex="-1"></a>          <span class="at">collapse =</span> <span class="st">&quot;+&quot;</span></span>
+<span id="cb32-23"><a href="#cb32-23" tabindex="-1"></a>        )</span>
+<span id="cb32-24"><a href="#cb32-24" tabindex="-1"></a>      )</span>
+<span id="cb32-25"><a href="#cb32-25" tabindex="-1"></a>)</span>
+<span id="cb32-26"><a href="#cb32-26" tabindex="-1"></a>        </span>
+<span id="cb32-27"><a href="#cb32-27" tabindex="-1"></a>                     </span>
+<span id="cb32-28"><a href="#cb32-28" tabindex="-1"></a>lsdv <span class="ot">&lt;-</span> </span>
+<span id="cb32-29"><a href="#cb32-29" tabindex="-1"></a>  plm<span class="sc">::</span><span class="fu">plm</span>(</span>
+<span id="cb32-30"><a href="#cb32-30" tabindex="-1"></a>    <span class="at">formula =</span> fml,</span>
+<span id="cb32-31"><a href="#cb32-31" tabindex="-1"></a>    <span class="at">data =</span> df_design_multiperiod_observed,</span>
+<span id="cb32-32"><a href="#cb32-32" tabindex="-1"></a>    <span class="at">index =</span></span>
+<span id="cb32-33"><a href="#cb32-33" tabindex="-1"></a>      <span class="fu">c</span>(</span>
+<span id="cb32-34"><a href="#cb32-34" tabindex="-1"></a>        <span class="st">&quot;id&quot;</span>,</span>
+<span id="cb32-35"><a href="#cb32-35" tabindex="-1"></a>        <span class="st">&quot;time&quot;</span></span>
+<span id="cb32-36"><a href="#cb32-36" tabindex="-1"></a>      ),</span>
+<span id="cb32-37"><a href="#cb32-37" tabindex="-1"></a>    <span class="at">effect =</span> <span class="st">&quot;twoways&quot;</span></span>
+<span id="cb32-38"><a href="#cb32-38" tabindex="-1"></a>  )</span>
+<span id="cb32-39"><a href="#cb32-39" tabindex="-1"></a></span>
+<span id="cb32-40"><a href="#cb32-40" tabindex="-1"></a>clubSandwich<span class="sc">::</span><span class="fu">coef_test</span>(</span>
+<span id="cb32-41"><a href="#cb32-41" tabindex="-1"></a>  lsdv,</span>
+<span id="cb32-42"><a href="#cb32-42" tabindex="-1"></a>  <span class="at">vcov =</span> <span class="st">&quot;CR1&quot;</span>,</span>
+<span id="cb32-43"><a href="#cb32-43" tabindex="-1"></a>  <span class="at">cluster =</span> <span class="st">&quot;id&quot;</span>,</span>
+<span id="cb32-44"><a href="#cb32-44" tabindex="-1"></a>  <span class="at">test =</span> <span class="st">&quot;naive-t&quot;</span></span>
+<span id="cb32-45"><a href="#cb32-45" tabindex="-1"></a>)</span></code></pre></div>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Coef"],"name":[1],"type":["chr"],"align":["left"]},{"label":["beta"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["tstat"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df_t"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["p_t"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"z_it_t_505","2":"0.1702083","3":"0.006509819","4":"26.146397","5":"999","6":"3.148614e-115","_rn_":"z_it_t_505"},{"1":"z_it_t_506","2":"0.1884960","3":"0.007111025","4":"26.507567","5":"999","6":"1.139285e-117","_rn_":"z_it_t_506"},{"1":"z_it_t_507","2":"0.1752558","3":"0.006606194","4":"26.529012","5":"999","6":"8.156084e-118","_rn_":"z_it_t_507"},{"1":"z_it_t_508","2":"0.1805536","3":"0.006697162","4":"26.959717","5":"999","6":"9.820859e-121","_rn_":"z_it_t_508"},{"1":"z_it_t_509","2":"0.1908563","3":"0.007110409","4":"26.841821","5":"999","6":"6.194497e-120","_rn_":"z_it_t_509"},{"1":"z_it_t_510","2":"0.2040676","3":"0.007652083","4":"26.668243","5":"999","6":"9.302879e-119","_rn_":"z_it_t_510"},{"1":"z_it_t_606","2":"-0.4877827","3":"0.027689078","4":"-17.616430","5":"999","6":"1.068494e-60","_rn_":"z_it_t_606"},{"1":"z_it_t_607","2":"-0.4498325","3":"0.026377669","4":"-17.053534","5":"999","6":"1.982371e-57","_rn_":"z_it_t_607"},{"1":"z_it_t_608","2":"-0.4513963","3":"0.025830983","4":"-17.474996","5":"999","6":"7.165900e-60","_rn_":"z_it_t_608"},{"1":"z_it_t_609","2":"-0.4796776","3":"0.027687649","4":"-17.324606","5":"999","6":"5.373607e-59","_rn_":"z_it_t_609"},{"1":"z_it_t_610","2":"-0.5157074","3":"0.029869832","4":"-17.265159","5":"999","6":"1.188584e-58","_rn_":"z_it_t_610"},{"1":"z_it_t_707","2":"-0.3842658","3":"0.037997408","4":"-10.112948","5":"999","6":"5.897161e-23","_rn_":"z_it_t_707"},{"1":"z_it_t_708","2":"-0.3773633","3":"0.037552630","4":"-10.048919","5":"999","6":"1.065459e-22","_rn_":"z_it_t_708"},{"1":"z_it_t_709","2":"-0.4122213","3":"0.040431718","4":"-10.195493","5":"999","6":"2.738721e-23","_rn_":"z_it_t_709"},{"1":"z_it_t_710","2":"-0.4433033","3":"0.043044789","4":"-10.298653","5":"999","6":"1.042916e-23","_rn_":"z_it_t_710"},{"1":"z_it_t_808","2":"-0.1522525","3":"0.016305586","4":"-9.337447","5":"999","6":"6.213949e-20","_rn_":"z_it_t_808"},{"1":"z_it_t_809","2":"-0.1592979","3":"0.018289528","4":"-8.709789","5":"999","6":"1.243883e-17","_rn_":"z_it_t_809"},{"1":"z_it_t_810","2":"-0.1727879","3":"0.018830303","4":"-9.176053","5":"999","6":"2.498863e-19","_rn_":"z_it_t_810"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
 <p>得られた係数について、処置タイミングのグループごとに集計してやれば、先の差の差法推定(<code>did_dif</code>)と近しい値が得られる。</p>
-<div class="sourceCode" id="cb34"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb34-1"><a href="#cb34-1" tabindex="-1"></a>df_compare <span class="ot">&lt;-</span></span>
-<span id="cb34-2"><a href="#cb34-2" tabindex="-1"></a>  tibble<span class="sc">::</span><span class="fu">tibble</span>(</span>
-<span id="cb34-3"><a href="#cb34-3" tabindex="-1"></a>    <span class="at">group_i =</span> <span class="fu">c</span>(<span class="dv">5</span>,<span class="dv">6</span>,<span class="dv">7</span>,<span class="dv">8</span>),</span>
-<span id="cb34-4"><a href="#cb34-4" tabindex="-1"></a>    <span class="at">did_lsdv =</span></span>
-<span id="cb34-5"><a href="#cb34-5" tabindex="-1"></a>      <span class="fu">c</span>(</span>
-<span id="cb34-6"><a href="#cb34-6" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_5&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>),</span>
-<span id="cb34-7"><a href="#cb34-7" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_6&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>),</span>
-<span id="cb34-8"><a href="#cb34-8" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_7&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>),</span>
-<span id="cb34-9"><a href="#cb34-9" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_8&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>)</span>
-<span id="cb34-10"><a href="#cb34-10" tabindex="-1"></a>      ),</span>
-<span id="cb34-11"><a href="#cb34-11" tabindex="-1"></a>    <span class="at">did_dif =</span> </span>
-<span id="cb34-12"><a href="#cb34-12" tabindex="-1"></a>      trend_treated<span class="sc">$</span>trend_treated <span class="sc">-</span> trend_control<span class="sc">$</span>trend_control</span>
-<span id="cb34-13"><a href="#cb34-13" tabindex="-1"></a>  )</span>
-<span id="cb34-14"><a href="#cb34-14" tabindex="-1"></a>df_compare</span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb33-1"><a href="#cb33-1" tabindex="-1"></a>df_compare <span class="ot">&lt;-</span></span>
+<span id="cb33-2"><a href="#cb33-2" tabindex="-1"></a>  tibble<span class="sc">::</span><span class="fu">tibble</span>(</span>
+<span id="cb33-3"><a href="#cb33-3" tabindex="-1"></a>    <span class="at">group_i =</span> <span class="fu">c</span>(<span class="dv">5</span>,<span class="dv">6</span>,<span class="dv">7</span>,<span class="dv">8</span>),</span>
+<span id="cb33-4"><a href="#cb33-4" tabindex="-1"></a>    <span class="at">did_lsdv =</span></span>
+<span id="cb33-5"><a href="#cb33-5" tabindex="-1"></a>      <span class="fu">c</span>(</span>
+<span id="cb33-6"><a href="#cb33-6" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_5&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>),</span>
+<span id="cb33-7"><a href="#cb33-7" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_6&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>),</span>
+<span id="cb33-8"><a href="#cb33-8" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_7&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>),</span>
+<span id="cb33-9"><a href="#cb33-9" tabindex="-1"></a>        <span class="fu">mean</span>(lsdv<span class="sc">$</span>coefficients[<span class="fu">grep</span>(<span class="st">&quot;z_it_t_8&quot;</span>,<span class="fu">names</span>(lsdv<span class="sc">$</span>coefficients),<span class="at">value=</span><span class="cn">TRUE</span>)], <span class="at">na.rm=</span><span class="cn">TRUE</span>)</span>
+<span id="cb33-10"><a href="#cb33-10" tabindex="-1"></a>      ),</span>
+<span id="cb33-11"><a href="#cb33-11" tabindex="-1"></a>    <span class="at">did_dif =</span> </span>
+<span id="cb33-12"><a href="#cb33-12" tabindex="-1"></a>      trend_treated<span class="sc">$</span>trend_treated <span class="sc">-</span> trend_control<span class="sc">$</span>trend_control</span>
+<span id="cb33-13"><a href="#cb33-13" tabindex="-1"></a>  )</span>
+<span id="cb33-14"><a href="#cb33-14" tabindex="-1"></a>df_compare</span></code></pre></div>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":["group_i"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["did_lsdv"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["did_dif"],"name":[3],"type":["dbl[,1]"],"align":["right"]}],"data":[{"1":"5","2":"0.1849063","3":"0.1846163"},{"1":"6","2":"-0.4768793","3":"-0.4770843"},{"1":"7","2":"-0.4042885","3":"-0.4044834"},{"1":"8","2":"-0.1614461","3":"-0.1614461"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
@@ -3709,13 +3706,13 @@ Y_{it} =&amp; \beta + \sum_{k=5}^{8} \mu_k G_{ki} + \sum_{t&#39;=2}^{T}
 <p>これらの値は必ずしも有限標本で厳密には一致しない。これは、修正TWFE推定の回帰には、
 never-treatedのみならず、not-yet-treatedとの比較も一部含まれるためである。</p>
 <p>これらの加重平均をとれば、</p>
-<div class="sourceCode" id="cb35"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb35-1"><a href="#cb35-1" tabindex="-1"></a>df_compare<span class="sc">$</span>proportion <span class="ot">&lt;-</span> </span>
-<span id="cb35-2"><a href="#cb35-2" tabindex="-1"></a>  df_did<span class="sc">$</span>proportion</span>
-<span id="cb35-3"><a href="#cb35-3" tabindex="-1"></a>df_compare <span class="sc">%&gt;%</span></span>
-<span id="cb35-4"><a href="#cb35-4" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">summarize</span>(</span>
-<span id="cb35-5"><a href="#cb35-5" tabindex="-1"></a>    <span class="at">did_lsdv_average =</span> <span class="fu">sum</span>(did_lsdv <span class="sc">*</span> proportion),</span>
-<span id="cb35-6"><a href="#cb35-6" tabindex="-1"></a>    <span class="at">did_dif_average =</span> <span class="fu">sum</span>(did_dif <span class="sc">*</span> proportion)</span>
-<span id="cb35-7"><a href="#cb35-7" tabindex="-1"></a>  )</span></code></pre></div>
+<div class="sourceCode" id="cb34"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb34-1"><a href="#cb34-1" tabindex="-1"></a>df_compare<span class="sc">$</span>proportion <span class="ot">&lt;-</span> </span>
+<span id="cb34-2"><a href="#cb34-2" tabindex="-1"></a>  df_did<span class="sc">$</span>proportion</span>
+<span id="cb34-3"><a href="#cb34-3" tabindex="-1"></a>df_compare <span class="sc">%&gt;%</span></span>
+<span id="cb34-4"><a href="#cb34-4" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">summarize</span>(</span>
+<span id="cb34-5"><a href="#cb34-5" tabindex="-1"></a>    <span class="at">did_lsdv_average =</span> <span class="fu">sum</span>(did_lsdv <span class="sc">*</span> proportion),</span>
+<span id="cb34-6"><a href="#cb34-6" tabindex="-1"></a>    <span class="at">did_dif_average =</span> <span class="fu">sum</span>(did_dif <span class="sc">*</span> proportion)</span>
+<span id="cb34-7"><a href="#cb34-7" tabindex="-1"></a>  )</span></code></pre></div>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
 {"columns":[{"label":["did_lsdv_average"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["did_dif_average"],"name":[2],"type":["dbl"],"align":["right"]}],"data":[{"1":"0.02995169","2":"0.02969205"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
