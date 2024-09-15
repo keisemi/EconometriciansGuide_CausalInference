@@ -44,11 +44,11 @@ mainフォルダには分析実装の.Rmdコードの他、それらをknitし�
 
 <!-- -->
 
-    % remotesパッケージのインストール
+    # remotesパッケージのインストール
     install.packages("remotes")
-    % 本レポジトリに必要な従属パッケージのインストール
-    remotes::remotes::install_deps()
-    % 本レポジトリをパッケージとしてインストール
+    # 本レポジトリに必要な従属パッケージのインストール
+    remotes::install_deps()
+    # 本レポジトリをパッケージとしてインストール
     remotes::install_github("keisemi/EconometriciansGuide_CausalInference")
 
 以上を行えば、mainフォルダの各.Rmdファイルを実行できるようになっているはずです。
