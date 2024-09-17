@@ -56,5 +56,5 @@ mainフォルダには分析実装の.Rmdコードの他、それらをknitし�
 ただし、一部のパッケージのインストールにあたってコンパイルが必要な場合があります。
 (特に、inference_wild_cluster_bootstrap.Rmdでインストールするfwildclusterboot)
 その際、環境によっては別途コンパイラのインストールが必要になる場合があります。
-例えば、windowsであればRtools(<https://cran.r-project.org/bin/windows/Rtools/>)、
+例えば、windowsであればRtools (<https://cran.r-project.org/bin/windows/Rtools/>)、
 Macであれば、Xcodeをインストールすることが必要となる場合があります。
