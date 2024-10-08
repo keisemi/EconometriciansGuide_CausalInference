@@ -21,6 +21,7 @@ knitr::opts_chunk$set(
 ## はじめに
 ここは、川口康平・澤田真行『[因果推論の計量経済学](https://www.nippyo.co.jp/shop/book/9359.html)』（日本評論社、2024年刊）のリポジトリです（本書の「はしがき」「目次」「序章」は【[コチラ](https://www.nippyo.co.jp/shop/img/content_pdf/09359.pdf)】からご覧いただけます）。
 Rコードの提供や、本文の解説に対する数学的議論（証明、補足など）をまとめた「[テクニカルノート](https://github.com/keisemi/EconometriciansGuide_CausalInference/tree/main/Technical_Note)」の提供を行っています。
+また、本書の正誤情報もアップロードしています（「[Errata](https://github.com/keisemi/EconometriciansGuide_CausalInference/tree/main/Errata)」フォルダをご参照ください））
 
 
 ### ご利用に際してのお断り
